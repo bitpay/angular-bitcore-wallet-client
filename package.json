@@ -6,6 +6,11 @@
   "main": "index.js",
   "devDependencies": {
     "browserify": "^9.0.3",
-    "uglify": "^0.1.1"
+    "uglify": "^0.1.1",
+    "bitcore-wallet-client": "*"
+  },
+  "repository": {
+    "url": "git://github.com/bitpay/angular-bitcore-wallet-client.git",
+    "type": "git"
   }
 }
