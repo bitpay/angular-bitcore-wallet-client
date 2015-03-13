@@ -24,8 +24,6 @@ bwcModule.provider("bwcService", function() {
     var service = {};
 
     service.getClient = function(walletData, cb) {
-
-      console.log('[index.js.26]'); //TODO
       var bwc = new Client({
         baseUrl: config.baseUrl,
         verbose: config.verbose,
