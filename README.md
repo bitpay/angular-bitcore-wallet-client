@@ -30,10 +30,21 @@ See the [API referece](https://github.com/bitpay/bitcore-wallet-client) for more
 ```javascript
 angular.module('myApp').factory('myService', 
   function(bwcService) {
-    var credential = getCredentials(); // e.g. from localStorage
-    bwcService.getStatus(credentials, function(err, res) {
-      console.log(res);
+    var walletClient = bwcService.getClient();
+    walletClient.createWallet('Personal Wallet', 'me', 1, 1, 'livenet', function(err) {
+    
+      // Store in
+      save(walletClient.export());
+
+      // Read other wallet
+      var wallet2 = read(...);
+      var walletClient2 = bwcService(getClient(wallet2));
+      
+      walletClient2.getStatus(function(err, status) {
+         console.log(status);
+      });
     });
   }
 );
 ```
+See Complete API at [Bitcore Wallet Client Readme](https://github.com/bitpay/bitcore-wallet-client)
