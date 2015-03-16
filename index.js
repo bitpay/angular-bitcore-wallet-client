@@ -22,7 +22,11 @@ bwcModule.provider("bwcService", function() {
   provider.$get = function() {
     var service = {};
 
-    service.getClient = function(walletData, cb) {
+    service.getBitcore = function() {
+      return Client.Bitcore;
+    };
+
+    service.getClient = function(walletData) {
       var bwc = new Client({
         baseUrl: config.baseUrl,
         verbose: config.verbose,
