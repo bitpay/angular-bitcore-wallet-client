@@ -7,7 +7,7 @@ bwcModule.provider("bwcService", function() {
   var provider = {};
 
   var config = {
-    baseUrl: 'http://localhost:3001/copay/api',
+    baseUrl: 'http://localhost:3001/bws/api',
     verbose: null
   };
 
