@@ -26,6 +26,10 @@ bwcModule.provider("bwcService", function() {
       return Client.Bitcore;
     };
 
+    service.getUtils = function() {
+      return Client.Utils;
+    };
+
     service.getClient = function(walletData) {
       var bwc = new Client({
         baseUrl: config.baseUrl,
