@@ -2,7 +2,7 @@
 var bwcModule = angular.module('bwcModule', []);
 var Client = require('bitcore-wallet-client');
 
-bwcModule.constant('MODULE_VERSION', '0.0.6');
+bwcModule.constant('MODULE_VERSION', '0.0.9');
 
 bwcModule.provider("bwcService", function() {
   var provider = {};
@@ -29,6 +29,10 @@ bwcModule.provider("bwcService", function() {
 
     service.getBitcore = function() {
       return Client.Bitcore;
+    };
+
+    service.getSJCL = function() {
+      return Client.sjcl;
     };
 
     service.getUtils = function() {
@@ -1032,7 +1036,9 @@ API.prototype._oldCopayDecrypt = function(username, password, blob) {
     passphrase = username + SEP2 + password;
     try {
       decrypted = sjcl.decrypt(passphrase, blob);
-    } catch (e) {};
+    } catch (e) {
+      log.debug(e);
+    };
   }
 
   if (!decrypted)
@@ -1431,13 +1437,13 @@ var client = module.exports = require('./api');
  * @alias module:Client.Verifier
  */
 client.Verifier = require('./verifier');
-
 client.Utils = require('./utils');
+client.sjcl = require('sjcl');
 
 // Expose bitcore
 client.Bitcore = require('bitcore-wallet-utils').Bitcore;
 
-},{"./api":3,"./utils":10,"./verifier":11,"bitcore-wallet-utils":36}],7:[function(require,module,exports){
+},{"./api":3,"./utils":10,"./verifier":11,"bitcore-wallet-utils":36,"sjcl":205}],7:[function(require,module,exports){
 var _ = require('lodash');
 /**
  * @desc
@@ -37409,7 +37415,7 @@ module.exports={
   "homepage": "https://github.com/bitpay/bitcore",
   "_id": "bitcore@0.11.6",
   "_shasum": "88329d23725e822ff585193d86c967b9dc5238eb",
-  "_from": "bitcore@>=0.11.6-0 <0.12.0-0",
+  "_from": "bitcore@^0.11.6",
   "_npmVersion": "1.4.28",
   "_npmUser": {
     "name": "maraoz",
@@ -86181,8 +86187,6 @@ Buffer.prototype.writeDoubleBE = function writeDoubleBE (value, offset, noAssert
 
 // copy(targetBuffer, targetStart=0, sourceStart=0, sourceEnd=buffer.length)
 Buffer.prototype.copy = function copy (target, target_start, start, end) {
-  var self = this // source
-
   if (!start) start = 0
   if (!end && end !== 0) end = this.length
   if (target_start >= target.length) target_start = target.length
@@ -86191,13 +86195,13 @@ Buffer.prototype.copy = function copy (target, target_start, start, end) {
 
   // Copy 0 bytes; we're done
   if (end === start) return 0
-  if (target.length === 0 || self.length === 0) return 0
+  if (target.length === 0 || this.length === 0) return 0
 
   // Fatal error conditions
   if (target_start < 0) {
     throw new RangeError('targetStart out of bounds')
   }
-  if (start < 0 || start >= self.length) throw new RangeError('sourceStart out of bounds')
+  if (start < 0 || start >= this.length) throw new RangeError('sourceStart out of bounds')
   if (end < 0) throw new RangeError('sourceEnd out of bounds')
 
   // Are we oob?
@@ -86282,8 +86286,7 @@ Buffer._augment = function _augment (arr) {
   arr.constructor = Buffer
   arr._isBuffer = true
 
-  // save reference to original Uint8Array get/set methods before overwriting
-  arr._get = arr.get
+  // save reference to original Uint8Array set method before overwriting
   arr._set = arr.set
 
   // deprecated, will be removed in node 0.13+
@@ -94884,7 +94887,7 @@ module.exports={
   "gitHead": "17dc013761dd1efcfb868e2b06b0b897627b40be",
   "_id": "elliptic@1.0.1",
   "_shasum": "d180376b66a17d74995c837796362ac4d22aefe3",
-  "_from": "elliptic@>=1.0.0-0 <2.0.0-0",
+  "_from": "elliptic@^1.0.0",
   "_npmVersion": "1.4.28",
   "_npmUser": {
     "name": "indutny",
@@ -97305,88 +97308,95 @@ arguments[4][320][0].apply(exports,arguments)
 },{"dup":320}],366:[function(require,module,exports){
 (function (Buffer){
 'use strict';
-var createHash = require('sha.js')
-
+var inherits = require('inherits')
 var md5 = require('./md5')
 var rmd160 = require('ripemd160')
-var Transform = require('stream').Transform;
-var inherits = require('inherits')
+var sha = require('sha.js')
 
-module.exports = function (alg) {
-  if('md5' === alg) return new HashNoConstructor(md5)
-  if('rmd160' === alg) return new HashNoConstructor(rmd160)
-  return new Hash(createHash(alg))
-}
-inherits(HashNoConstructor, Transform)
+var Transform = require('stream').Transform
 
 function HashNoConstructor(hash) {
-  Transform.call(this);
+  Transform.call(this)
+
   this._hash = hash
   this.buffers = []
 }
 
-HashNoConstructor.prototype._transform = function (data, _, done) {
+inherits(HashNoConstructor, Transform)
+
+HashNoConstructor.prototype._transform = function (data, _, next) {
   this.buffers.push(data)
-  done()
+
+  next()
 }
-HashNoConstructor.prototype._flush = function (done) {
-  var buf = Buffer.concat(this.buffers)
-  var r = this._hash(buf)
-  this.buffers = null
-  this.push(r)
-  done()
+
+HashNoConstructor.prototype._flush = function (next) {
+  this.push(this.digest())
+  next()
 }
+
 HashNoConstructor.prototype.update = function (data, enc) {
-  this.write(data, enc)
+  if (typeof data === 'string') {
+    data = new Buffer(data, enc)
+  }
+
+  this.buffers.push(data)
   return this
 }
 
 HashNoConstructor.prototype.digest = function (enc) {
-  this.end()
-  var outData = new Buffer('')
-  var chunk
-  while ((chunk = this.read())) {
-    outData = Buffer.concat([outData, chunk])
-  }
-  if (enc) {
-    outData = outData.toString(enc)
-  }
-  return outData
+  var buf = Buffer.concat(this.buffers)
+  var r = this._hash(buf)
+  this.buffers = null
+
+  return enc ? r.toString(enc) : r
+}
+
+function Hash(hash) {
+  Transform.call(this)
+
+  this._hash = hash
 }
 
 inherits(Hash, Transform)
 
-function Hash(hash) {
-  Transform.call(this);
-  this._hash = hash
+Hash.prototype._transform = function (data, enc, next) {
+  if (enc) data = new Buffer(data, enc)
+
+  this._hash.update(data)
+
+  next()
 }
 
-Hash.prototype._transform = function (data, _, done) {
-  this._hash.update(data)
-  done()
-}
-Hash.prototype._flush = function (done) {
+Hash.prototype._flush = function (next) {
   this.push(this._hash.digest())
   this._hash = null
-  done()
+
+  next()
 }
+
 Hash.prototype.update = function (data, enc) {
-  this.write(data, enc)
+  if (typeof data === 'string') {
+    data = new Buffer(data, enc)
+  }
+
+  this._hash.update(data)
   return this
 }
 
 Hash.prototype.digest = function (enc) {
-  this.end()
-  var outData = new Buffer('')
-  var chunk
-  while ((chunk = this.read())) {
-    outData = Buffer.concat([outData, chunk])
-  }
-  if (enc) {
-    outData = outData.toString(enc)
-  }
-  return outData
+  var outData = this._hash.digest()
+
+  return enc ? outData.toString(enc) : outData
 }
+
+module.exports = function createHash (alg) {
+  if ('md5' === alg) return new HashNoConstructor(md5)
+  if ('rmd160' === alg) return new HashNoConstructor(rmd160)
+
+  return new Hash(sha(alg))
+}
+
 }).call(this,require("buffer").Buffer)
 },{"./md5":368,"buffer":272,"inherits":419,"ripemd160":369,"sha.js":371,"stream":438}],367:[function(require,module,exports){
 (function (Buffer){
