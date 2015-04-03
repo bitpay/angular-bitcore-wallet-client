@@ -30,6 +30,10 @@ bwcModule.provider("bwcService", function() {
       return Client.Bitcore;
     };
 
+    service.getSJCL = function() {
+      return Client.sjcl;
+    };
+
     service.getUtils = function() {
       return Client.Utils;
     };
