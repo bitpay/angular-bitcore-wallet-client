@@ -125,6 +125,10 @@ API.prototype.initNotifications = function(cb) {
   var self = this;
   var socket = io.connect(self.baseHost, {
     'force new connection': true,
+    'reconnection': true,
+    'reconnectionDelay': 1000,
+    'secure': true,
+    'transports': ['polling', 'websocket'],
   });
 
   socket.on('unauthorized', function() {
@@ -365,6 +369,9 @@ API.prototype._doRequest = function(method, url, args, cb) {
     if (res.statusCode != 200) {
       return cb(API._parseError(body));
     }
+
+    if (body === '{"error":"read ECONNRESET"}')
+      return cb(JSON.parse(body));
 
     return cb(null, body, res.header);
   });
@@ -992,6 +999,7 @@ API.prototype.getTxHistory = function(opts, cb) {
   var url = '/v1/txhistory/' + qs;
   self._doGetRequest(url, function(err, txs) {
     if (err) return cb(err);
+    API._processTxps(txs, self.credentials.sharedEncryptingKey);
     return cb(null, txs);
   });
 };
@@ -1079,9 +1087,11 @@ API.prototype._walletPrivKeyFromOldCopayWallet = function(w) {
  */
 API.prototype.createWalletFromOldCopay = function(username, password, blob, cb) {
   var self = this;
-
   var w = this._oldCopayDecrypt(username, password, blob);
   if (!w) return cb('Could not decrypt');
+
+  if ( w.publicKeyRing.copayersExtPubKeys.length != w.opts.totalCopayers)
+    return cb('Wallet is incomplete, cannot be imported');
 
   var m = w.opts.requiredCopayers;
   var n = w.opts.totalCopayers;
@@ -1097,13 +1107,22 @@ API.prototype.createWalletFromOldCopay = function(username, password, blob, cb) 
     id: walletId,
     walletPrivKey: walletPrivKey,
   }, function(err, secret) {
+
     if (err && err.code == 'WEXISTS') {
+
+      // Grab My Copayer Name
+      var hd = new Bitcore.HDPublicKey(self.credentials.xPubKey).derive('m/2147483646/0/0');
+      var pubKey = hd.publicKey.toString('hex');
+      var copayerName = w.publicKeyRing.nicknameFor[pubKey];
+ 
       self.credentials.addWalletInfo(walletId, walletName, m, n,
-        walletPrivKey, username);
+        walletPrivKey, copayerName || username);
 
       return self._replaceTemporaryRequestKey(function(err) {
         if (err) return cb(err);
-        self.openWallet(cb);
+        self.openWallet(function(err) {
+          return cb(err, true);
+        });
       });
     }
     if (err) return cb(err);
@@ -1117,16 +1136,11 @@ API.prototype.createWalletFromOldCopay = function(username, password, blob, cb) 
       // Grab Copayer Name
       var hd = new Bitcore.HDPublicKey(item.xPubKey).derive('m/2147483646/0/0');
       var pubKey = hd.publicKey.toString('hex');
-      copayerName = w.publicKeyRing.nicknameFor[pubKey] || 'recovered copayer #' + i;
-      i++;
+      copayerName = w.publicKeyRing.nicknameFor[pubKey] || 'recovered copayer #' + i++;
       self._doJoinWallet(walletId, walletPrivKey, item.xPubKey, item.requestPubKey, copayerName, {
         isTemporaryRequestKey: true
       }, next);
-    }, function(err) {
-      if (err) return cb(err);
-      // Copays wallets always have an address
-      self.createAddress(cb);
-    });
+    }, cb);
   });
 };
 
@@ -1666,8 +1680,13 @@ PayProRequest.get = function(opts, cb) {
 
   getter(opts, function(err, dataBuffer) {
     if (err) return cb(err);
-    var body = PayPro.PaymentRequest.decode(dataBuffer);
-    var request = (new PayPro()).makePaymentRequest(body);
+    var request;
+    try {
+      var body = PayPro.PaymentRequest.decode(dataBuffer);
+      request = (new PayPro()).makePaymentRequest(body);
+    } catch (e) {
+      return cb('Could not parse payment protocol:' + e)
+    }
 
     var signature = request.get('signature');
     var serializedDetails = request.get('serialized_payment_details');
@@ -1825,6 +1844,8 @@ Verifier.checkCopayers = function(credentials, copayers) {
   var uniq = [];
   var error;
   _.each(copayers, function(copayer) {
+    if (error) return;
+
     if (uniq[copayers.xPubKey]++) {
       log.error('Repeated public keys in server response');
       error = true;
