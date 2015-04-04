@@ -2,7 +2,7 @@
 var bwcModule = angular.module('bwcModule', []);
 var Client = require('bitcore-wallet-client');
 
-bwcModule.constant('MODULE_VERSION', '0.0.9');
+bwcModule.constant('MODULE_VERSION', '0.0.11');
 
 bwcModule.provider("bwcService", function() {
   var provider = {};
@@ -1102,7 +1102,14 @@ API.prototype.createWalletFromOldCopay = function(username, password, blob, cb) 
 
   var walletPrivKey = this._walletPrivKeyFromOldCopayWallet(w);
 
-  this.createWallet(walletName, username, m, n, {
+
+  // Grab My Copayer Name
+  var hd = new Bitcore.HDPublicKey(self.credentials.xPubKey).derive('m/2147483646/0/0');
+  var pubKey = hd.publicKey.toString('hex');
+  var copayerName = w.publicKeyRing.nicknameFor[pubKey] || username;
+
+
+  this.createWallet(walletName, copayerName, m, n, {
     network: network,
     id: walletId,
     walletPrivKey: walletPrivKey,
@@ -1110,13 +1117,8 @@ API.prototype.createWalletFromOldCopay = function(username, password, blob, cb) 
 
     if (err && err.code == 'WEXISTS') {
 
-      // Grab My Copayer Name
-      var hd = new Bitcore.HDPublicKey(self.credentials.xPubKey).derive('m/2147483646/0/0');
-      var pubKey = hd.publicKey.toString('hex');
-      var copayerName = w.publicKeyRing.nicknameFor[pubKey];
- 
       self.credentials.addWalletInfo(walletId, walletName, m, n,
-        walletPrivKey, copayerName || username);
+        walletPrivKey, copayerName);
 
       return self._replaceTemporaryRequestKey(function(err) {
         if (err) return cb(err);
