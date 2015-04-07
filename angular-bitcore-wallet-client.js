@@ -2,7 +2,7 @@
 var bwcModule = angular.module('bwcModule', []);
 var Client = require('bitcore-wallet-client');
 
-bwcModule.constant('MODULE_VERSION', '0.0.11');
+bwcModule.constant('MODULE_VERSION', '0.0.12');
 
 bwcModule.provider("bwcService", function() {
   var provider = {};
@@ -202,6 +202,8 @@ API._processTxps = function(txps, encryptingKey) {
     txp.message = API._decryptMessage(txp.message, encryptingKey);
     _.each(txp.actions, function(action) {
       action.comment = API._decryptMessage(action.comment, encryptingKey);
+      // TODO get copayerName from Credentials -> copayerId to copayerName
+      // action.copayerName = null;
     });
   });
 };
@@ -338,9 +340,10 @@ API.prototype._doRequest = function(method, url, args, cb) {
 
   var reqSignature;
 
-  if (this.credentials.requestPrivKey) {
+  if (this.credentials.requestPrivKey || args._requestPrivKey) {
     reqSignature = API._signRequest(method, url, args, args._requestPrivKey || this.credentials.requestPrivKey);
   }
+
   var absUrl = this.baseUrl + url;
   var args = {
     // relUrl: only for testing with `supertest`
@@ -463,6 +466,14 @@ API.prototype.canSign = function() {
 };
 
 
+API._extractPublicKeyRing = function(copayers) {
+  return _.map(copayers, function(copayer) {
+    var pkr = _.pick(copayer, ['xPubKey', 'requestPubKey', 'isTemporaryRequestKey']);
+    pkr.copayerName = copayer.name;
+    return pkr;
+  });
+};
+
 /**
  * Open a wallet and try to complete the public key ring.
  *
@@ -483,8 +494,9 @@ API.prototype.openWallet = function(cb) {
     if (err) return cb(err);
     var wallet = ret.wallet;
 
+console.log('[api.js.434] HOLa'); //TODO
     if (wallet.status != 'complete')
-      return cb(null, false);
+      return cb();
 
     if (self.credentials.walletPrivKey) {
 
@@ -500,9 +512,7 @@ API.prototype.openWallet = function(cb) {
 
       // Wallet was completed. We are just updating temporary request keys
 
-      self.credentials.updatePublicKeyRing(_.map(wallet.copayers, function(copayer) {
-        return _.pick(copayer, ['xPubKey', 'requestPubKey', 'isTemporaryRequestKey']);
-      }));
+      self.credentials.updatePublicKeyRing(API._extractPublicKeyRing(wallet.copayers));
       if (!self.credentials.hasTemporaryRequestKeys())
         self.emit('walletCompleted', wallet);
     } else {
@@ -510,9 +520,7 @@ API.prototype.openWallet = function(cb) {
 
       // Wallet was not complete. We are completing it.
 
-      self.credentials.addPublicKeyRing(_.map(wallet.copayers, function(copayer) {
-        return _.pick(copayer, ['xPubKey', 'requestPubKey', 'isTemporaryRequestKey']);
-      }));
+      self.credentials.addPublicKeyRing(API._extractPublicKeyRing(wallet.copayers));
 
       if (!self.credentials.hasWalletInfo()) {
         var me = _.find(wallet.copayers, {
@@ -523,7 +531,7 @@ API.prototype.openWallet = function(cb) {
       self.emit('walletCompleted', wallet);
     }
 
-    return cb(null, true);
+    return cb(null, ret);
   });
 };
 
@@ -573,7 +581,6 @@ API.prototype.createWallet = function(walletName, copayerName, m, n, opts, cb) {
     if (err) return cb(err);
 
     var walletId = body.walletId;
-
     var secret = WalletUtils.toSecret(walletId, walletPrivKey, network);
     self.credentials.addWalletInfo(walletId, walletName, m, n, walletPrivKey.toString(), copayerName);
 
@@ -631,6 +638,7 @@ API.prototype.recreateWallet = function(cb) {
     n: self.credentials.n,
     pubKey: walletPrivKey.toPublicKey().toString(),
     network: self.credentials.network,
+    id: self.credentials.walletId,
   };
   self._doPostRequest('/v1/wallets/', args, function(err, body) {
     if (err) return cb(err);
@@ -639,13 +647,9 @@ API.prototype.recreateWallet = function(cb) {
 
     var i = 1;
     async.each(self.credentials.publicKeyRing, function(item, next) {
-      var copayerName;
-      if (item.xPubKey == self.credentials.xPubKey) {
-        copayerName = self.credentials.copayerName;
-      } else {
-        copayerName = 'recovered copayer #' + (i++);
-      }
-      self._doJoinWallet(walletId, walletPrivKey, item.xPubKey, item.requestPubKey, copayerName, {}, next);
+      self._doJoinWallet(walletId, walletPrivKey, item.xPubKey, item.requestPubKey, item.copayerName, {
+        isTemporaryRequestKey: item.isTemporaryRequestKey,
+      }, next);
     }, cb);
   });
 };
@@ -867,6 +871,7 @@ API.prototype.signTxProposal = function(txp, cb) {
 
     self._doPostRequest(url, args, function(err, txp) {
       if (err) return cb(err);
+      API._processTxps([txp], self.credentials.sharedEncryptingKey);
       return cb(null, txp);
     });
   })
@@ -932,6 +937,7 @@ API.prototype.rejectTxProposal = function(txp, reason, cb) {
   };
   self._doPostRequest(url, args, function(err, txp) {
     if (err) return cb(err);
+    API._processTxps([txp], self.credentials.sharedEncryptingKey);
     return cb(null, txp);
   });
 };
@@ -1090,7 +1096,7 @@ API.prototype.createWalletFromOldCopay = function(username, password, blob, cb) 
   var w = this._oldCopayDecrypt(username, password, blob);
   if (!w) return cb('Could not decrypt');
 
-  if ( w.publicKeyRing.copayersExtPubKeys.length != w.opts.totalCopayers)
+  if (w.publicKeyRing.copayersExtPubKeys.length != w.opts.totalCopayers)
     return cb('Wallet is incomplete, cannot be imported');
 
   var m = w.opts.requiredCopayers;
@@ -1099,50 +1105,47 @@ API.prototype.createWalletFromOldCopay = function(username, password, blob, cb) 
   var walletName = w.opts.name;
   var network = w.opts.networkName;
   this.credentials = Credentials.fromOldCopayWallet(w);
-
   var walletPrivKey = this._walletPrivKeyFromOldCopayWallet(w);
+  var copayerName = this.credentials.copayerName;
 
-
-  // Grab My Copayer Name
-  var hd = new Bitcore.HDPublicKey(self.credentials.xPubKey).derive('m/2147483646/0/0');
-  var pubKey = hd.publicKey.toString('hex');
-  var copayerName = w.publicKeyRing.nicknameFor[pubKey] || username;
-
-
-  this.createWallet(walletName, copayerName, m, n, {
-    network: network,
-    id: walletId,
-    walletPrivKey: walletPrivKey,
-  }, function(err, secret) {
-
-    if (err && err.code == 'WEXISTS') {
-
+  // First: Try to get the wallet with the imported credentials...
+  this.getStatus(function(err) {
+    // No error? -> Wallet is ready.
+    if (!err) {
+      log.debug('Wallet is already imported');
       self.credentials.addWalletInfo(walletId, walletName, m, n,
         walletPrivKey, copayerName);
+      return cb();
+    };
 
-      return self._replaceTemporaryRequestKey(function(err) {
-        if (err) return cb(err);
-        self.openWallet(function(err) {
-          return cb(err, true);
+    self.createWallet(walletName, copayerName, m, n, {
+      network: network,
+      id: walletId,
+      walletPrivKey: walletPrivKey,
+    }, function(err, secret) {
+      if (err && err.code == 'WEXISTS') {
+
+        self.credentials.addWalletInfo(walletId, walletName, m, n,
+          walletPrivKey, copayerName);
+
+        return self._replaceTemporaryRequestKey(function(err) {
+          if (err) return cb(err);
+          self.openWallet(function(err) {
+            return cb(err, true);
+          });
         });
-      });
-    }
-    if (err) return cb(err);
+      }
+      if (err) return cb(err);
 
-    var i = 1;
-    async.eachSeries(self.credentials.publicKeyRing, function(item, next) {
-      if (item.xPubKey == self.credentials.xPubKey)
-        return next();
-
-      var copayerName;
-      // Grab Copayer Name
-      var hd = new Bitcore.HDPublicKey(item.xPubKey).derive('m/2147483646/0/0');
-      var pubKey = hd.publicKey.toString('hex');
-      copayerName = w.publicKeyRing.nicknameFor[pubKey] || 'recovered copayer #' + i++;
-      self._doJoinWallet(walletId, walletPrivKey, item.xPubKey, item.requestPubKey, copayerName, {
-        isTemporaryRequestKey: true
-      }, next);
-    }, cb);
+      var i = 1;
+      async.eachSeries(self.credentials.publicKeyRing, function(item, next) {
+        if (item.xPubKey == self.credentials.xPubKey)
+          return next();
+        self._doJoinWallet(walletId, walletPrivKey, item.xPubKey, item.requestPubKey, item.copayerName, {
+          isTemporaryRequestKey: true
+        }, next);
+      }, cb);
+    });
   });
 };
 
@@ -1313,7 +1316,9 @@ Credentials.prototype.addWalletInfo = function(walletId, walletName, m, n, walle
   if (walletPrivKey)
     this.sharedEncryptingKey = WalletUtils.privateKeyToAESKey(walletPrivKey);
 
-  this.copayerName = copayerName;
+  if (copayerName)
+    this.copayerName = copayerName;
+
   if (n == 1) {
     this.addPublicKeyRing([{
       xPubKey: this.xPubKey,
@@ -1423,14 +1428,23 @@ Credentials.fromOldCopayWallet = function(w){
       var path = WalletUtils.PATHS.TMP_REQUEST_KEY;
       requestDerivation = (new Bitcore.HDPublicKey(xPubStr)).derive(path);
     }
+
+    // Grab Copayer Name
+    var hd = new Bitcore.HDPublicKey(xPubStr).derive('m/2147483646/0/0');
+    var pubKey = hd.publicKey.toString('hex');
+    var copayerName = w.publicKeyRing.nicknameFor[pubKey];
+    if (isMe) {
+      credentials.copayerName = copayerName;
+    }
+
     return {
       xPubKey: xPubStr,
       requestPubKey: requestDerivation.publicKey.toString(),
       isTemporaryRequestKey: !isMe,
+      copayerName: copayerName,
     };
   });
   credentials.addPublicKeyRing(pkr);
-
   return credentials;
 };
 
@@ -1885,7 +1899,6 @@ Verifier.checkTxProposalBody = function(credentials, txp) {
 
   if (!creatorKeys) return false;
 
-  // TODO: this should be an independent key
   var creatorSigningPubKey = creatorKeys.requestPubKey;
   var hash = WalletUtils.getProposalHash(txp.toAddress, txp.amount, txp.encryptedMessage || txp.message, txp.payProUrl);
   log.debug('Regenerating & verifying tx proposal hash -> Hash: ', hash, ' Signature: ', txp.proposalSignature);
@@ -50344,22 +50357,27 @@ var extend                = require('util')._extend
   , helpers               = require('./lib/helpers')
 
 var isFunction            = helpers.isFunction
-  , constructObject       = helpers.constructObject
-  , filterForCallback     = helpers.filterForCallback
-  , constructOptionsFrom  = helpers.constructOptionsFrom
   , paramsHaveRequestBody = helpers.paramsHaveRequestBody
 
 
 // organize params for patch, post, put, head, del
 function initParams(uri, options, callback) {
-  callback = filterForCallback([options, callback])
-  options = constructOptionsFrom(uri, options)
+  if (typeof options === 'function') {
+    callback = options
+  }
 
-  return constructObject()
-    .extend({callback: callback})
-    .extend({options: options})
-    .extend({uri: options.uri})
-    .done()
+  var params = {}
+  if (typeof options === 'object') {
+    params = extend({}, options)
+    params = extend(params, {uri: uri})
+  } else if (typeof uri === 'string') {
+    params = extend({}, {uri: uri})
+  } else {
+    params = extend({}, uri)
+  }
+
+  params.callback = callback
+  return params
 }
 
 function request (uri, options, callback) {
@@ -50368,25 +50386,22 @@ function request (uri, options, callback) {
   }
 
   var params = initParams(uri, options, callback)
-  options = params.options
-  options.callback = params.callback
-  options.uri = params.uri
 
-  if (params.options.method === 'HEAD' && paramsHaveRequestBody(params)) {
+  if (params.method === 'HEAD' && paramsHaveRequestBody(params)) {
     throw new Error('HTTP HEAD requests MUST NOT include a request body.')
   }
 
-  return new request.Request(options)
+  return new request.Request(params)
 }
 
 var verbs = ['get', 'head', 'post', 'put', 'patch', 'del']
 
-verbs.forEach(function(verb){
+verbs.forEach(function(verb) {
   var method = verb === 'del' ? 'DELETE' : verb.toUpperCase()
-  request[verb] = function(uri, options, callback){
+  request[verb] = function (uri, options, callback) {
     var params = initParams(uri, options, callback)
-    params.options.method = method
-    return this(params.uri || null, params.options, params.callback)
+    params.method = method
+    return request(params, params.callback)
   }
 })
 
@@ -50398,68 +50413,65 @@ request.cookie = function (str) {
   return cookies.parse(str)
 }
 
+function wrapRequestMethod (method, options, requester) {
+
+  return function (uri, opts, callback) {
+    var params = initParams(uri, opts, callback)
+
+    var headerlessOptions = extend({}, options)
+    delete headerlessOptions.headers
+    params = extend(headerlessOptions, params)
+
+    if (options.headers) {
+      var headers = extend({}, options.headers)
+      params.headers = extend(headers, params.headers)
+    }
+
+    if (typeof method === 'string') {
+      params.method = (method === 'del' ? 'DELETE' : method.toUpperCase())
+      method = request[method]
+    }
+
+    if (isFunction(requester)) {
+      method = requester
+    }
+
+    return method(params, params.callback)
+  }
+}
+
 request.defaults = function (options, requester) {
+  var self = this
 
   if (typeof options === 'function') {
     requester = options
     options = {}
   }
 
-  var self = this
-  var wrap = function (method) {
-    var headerlessOptions = function (options) {
-      options = extend({}, options)
-      delete options.headers
-      return options
-    }
+  var defaults      = wrapRequestMethod(self, options, requester)
 
-    var getHeaders = function (params, options) {
-      return constructObject()
-        .extend(options.headers)
-        .extend(params.options.headers)
-        .done()
-    }
+  var verbs = ['get', 'head', 'post', 'put', 'patch', 'del']
+  verbs.forEach(function(verb) {
+    defaults[verb]  = wrapRequestMethod(verb, options, requester)
+  })
 
-    return function (uri, opts, callback) {
-      var params = initParams(uri, opts, callback)
-      params.options = extend(headerlessOptions(options), params.options)
-
-      if (options.headers) {
-        params.options.headers = getHeaders(params, options)
-      }
-
-      if (isFunction(requester)) {
-        method = requester
-      }
-
-      return method(params.options, params.callback)
-    }
-  }
-
-  var defaults      = wrap(self)
-  defaults.get      = self.get
-  defaults.patch    = self.patch
-  defaults.post     = self.post
-  defaults.put      = self.put
-  defaults.head     = self.head
-  defaults.del      = self.del
-  defaults.cookie   = self.cookie
+  defaults.cookie   = wrapRequestMethod(self.cookie, options, requester)
   defaults.jar      = self.jar
   defaults.defaults = self.defaults
   return defaults
 }
 
 request.forever = function (agentOptions, optionsArg) {
-  var options = constructObject()
+  var options = {}
   if (optionsArg) {
-    options.extend(optionsArg)
+    options = extend({}, optionsArg)
   }
   if (agentOptions) {
     options.agentOptions = agentOptions
   }
 
-  options.extend({forever: true})
-  return request.defaults(options.done())
+  options.forever = true
+  return request.defaults(options)
 }
 
 // Exports
@@ -50981,8 +50993,7 @@ exports.Har = Har
 (function (process,Buffer){
 'use strict'
 
-var extend = require('util')._extend
-  , jsonSafeStringify = require('json-stringify-safe')
+var jsonSafeStringify = require('json-stringify-safe')
   , crypto = require('crypto')
 
 function deferMethod() {
@@ -50993,46 +51004,16 @@ function deferMethod() {
   return setImmediate
 }
 
-function constructObject(initialObject) {
-  initialObject = initialObject || {}
-
-  return {
-    extend: function (object) {
-      return constructObject(extend(initialObject, object))
-    },
-    done: function () {
-      return initialObject
-    }
-  }
-}
-
-function constructOptionsFrom(uri, options) {
-  var params = constructObject()
-  if (typeof options === 'object') {
-    params.extend(options).extend({uri: uri})
-  } else if (typeof uri === 'string') {
-    params.extend({uri: uri})
-  } else {
-    params.extend(uri)
-  }
-  return params.done()
-}
-
 function isFunction(value) {
   return typeof value === 'function'
 }
 
-function filterForCallback(values) {
-  var callbacks = values.filter(isFunction)
-  return callbacks[0]
-}
-
 function paramsHaveRequestBody(params) {
   return (
-    params.options.body ||
-    params.options.requestBodyStream ||
-    (params.options.json && typeof params.options.json !== 'boolean') ||
-    params.options.multipart
+    params.body ||
+    params.requestBodyStream ||
+    (params.json && typeof params.json !== 'boolean') ||
+    params.multipart
   )
 }
 
@@ -51059,9 +51040,6 @@ function toBase64 (str) {
 }
 
 exports.isFunction            = isFunction
-exports.constructObject       = constructObject
-exports.constructOptionsFrom  = constructOptionsFrom
-exports.filterForCallback     = filterForCallback
 exports.paramsHaveRequestBody = paramsHaveRequestBody
 exports.safeStringify         = safeStringify
 exports.md5                   = md5
@@ -51070,7 +51048,7 @@ exports.toBase64              = toBase64
 exports.defer                 = deferMethod()
 
 }).call(this,require('_process'),require("buffer").Buffer)
-},{"_process":422,"buffer":272,"crypto":278,"json-stringify-safe":187,"util":442}],127:[function(require,module,exports){
+},{"_process":422,"buffer":272,"crypto":278,"json-stringify-safe":187}],127:[function(require,module,exports){
 (function (Buffer){
 'use strict'
 
@@ -51130,7 +51108,7 @@ Multipart.prototype.setHeaders = function (chunked) {
     self.request.setHeader('content-type', 'multipart/related; boundary=' + self.boundary)
   } else {
     if (header.indexOf('boundary') !== -1) {
-      self.boundary = header.replace(/.*boundary=([^\s;])+.*/, '$1')
+      self.boundary = header.replace(/.*boundary=([^\s;]+).*/, '$1')
     } else {
       self.request.setHeader('content-type', header + '; boundary=' + self.boundary)
     }
@@ -70299,6 +70277,14 @@ Request.prototype.init = function (options) {
   }
   self.headers = self.headers ? copy(self.headers) : {}
 
+  // Delete headers with value undefined since they break
+  // ClientRequest.OutgoingMessage.setHeader in node 0.12
+  for (var headerName in self.headers) {
+    if (typeof self.headers[headerName] === 'undefined') {
+      delete self.headers[headerName]
+    }
+  }
+
   caseless.httpify(self, self.headers)
 
   if (!self.method) {
@@ -70669,7 +70655,12 @@ Request.prototype.init = function (options) {
 
     var end = function () {
       if (self._form) {
-        self._form.pipe(self)
+        if (!self._auth.hasAuth) {
+          self._form.pipe(self)
+        }
+        else if (self._auth.hasAuth && self._auth.sentAuth) {
+          self._form.pipe(self)
+        }
       }
       if (self._multipart && self._multipart.chunked) {
         self._multipart.body.pipe(self)
@@ -70687,6 +70678,10 @@ Request.prototype.init = function (options) {
         console.warn('options.requestBodyStream is deprecated, please pass the request object to stream.pipe.')
         self.requestBodyStream.pipe(self)
       } else if (!self.src) {
+        if (self._auth.hasAuth && !self._auth.sentAuth) {
+          self.end()
+          return
+        }
         if (self.method !== 'GET' && typeof self.method !== 'undefined') {
           self.setHeader('content-length', 0)
         }
