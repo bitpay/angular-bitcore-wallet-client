@@ -2,7 +2,7 @@
 var bwcModule = angular.module('bwcModule', []);
 var Client = require('bitcore-wallet-client');
 
-bwcModule.constant('MODULE_VERSION', '0.0.12');
+bwcModule.constant('MODULE_VERSION', '0.0.13');
 
 bwcModule.provider("bwcService", function() {
   var provider = {};
@@ -116,8 +116,11 @@ function API(opts) {
     log.setLevel('info');
   }
 };
-
 util.inherits(API, events.EventEmitter);
+
+API.privateKeyEncryptionOpts = {
+  iter: 10000
+};
 
 API.prototype.initNotifications = function(cb) {
   $.checkState(this.credentials);
@@ -290,6 +293,7 @@ API.prototype.export = function(opts) {
   var cred = Credentials.fromObj(this.credentials);
   if (opts.noSign) {
     delete cred.xPrivKey;
+    delete cred.xPrivKeyEncrypted;
   }
 
   if (opts.compressed) {
@@ -307,6 +311,8 @@ API.prototype.export = function(opts) {
  *
  * @param {Object} opts
  * @param {Boolean} opts.compressed
+ * @param {String} opts.password If the source has the private key encrypted, the password
+ * will be needed for derive credentials fields.
  */
 API.prototype.import = function(str, opts) {
   opts = opts || {};
@@ -314,14 +320,14 @@ API.prototype.import = function(str, opts) {
   var credentials;
   try {
     if (opts.compressed) {
-      credentials = Credentials.importCompressed(str);
+      credentials = Credentials.importCompressed(str, opts.password);
       // HACK: simulate incomplete credentials
       delete credentials.m;
     } else {
       credentials = Credentials.fromObj(JSON.parse(str));
     }
   } catch (ex) {
-    throw new Error('Error importing from source');
+    throw new Error('Error importing from source:' + ex);
   }
   this.credentials = credentials;
 };
@@ -356,7 +362,8 @@ API.prototype._doRequest = function(method, url, args, cb) {
     url: absUrl,
     body: args,
     json: true,
-    withCredentials: false
+    withCredentials: false,
+    timeout: 5000
   };
 
   log.debug('Request Args', util.inspect(args, {
@@ -367,11 +374,16 @@ API.prototype._doRequest = function(method, url, args, cb) {
     log.debug(util.inspect(body, {
       depth: 10
     }));
-    if (err) return cb(err);
-
     if (res.statusCode != 200) {
-      return cb(API._parseError(body));
+      if (res.statusCode == 404)
+        return cb({
+          code: 'NOTFOUND'
+        });
+
+      return cb(err || API._parseError(body));
     }
+
+    if (err) return cb(err);
 
     if (body === '{"error":"read ECONNRESET"}')
       return cb(JSON.parse(body));
@@ -461,6 +473,44 @@ API.prototype.isComplete = function() {
   return this.credentials && this.credentials.isComplete();
 };
 
+/**
+ * Is private key currently encrypted? (ie, locked)
+ *
+ * @return {Boolean}
+ */
+API.prototype.isPrivKeyEncrypted = function() {
+  return this.credentials && this.credentials.isPrivKeyEncrypted();
+};
+
+/**
+ * Is private key encryption setup?
+ *
+ * @return {Boolean}
+ */
+API.prototype.hasPrivKeyEncrypted = function() {
+  return this.credentials && this.credentials.hasPrivKeyEncrypted();
+};
+
+/**
+ * unlocks the private key. `lock` need to be called explicity
+ * later to remove the unencrypted private key.
+ *
+ * @param password
+ */
+API.prototype.unlock = function(password) {
+  try {
+    this.credentials.unlock(password);
+  } catch (e) {
+    throw new Error('Could not unlock:' + e);
+  }
+};
+
+/**
+ * Can this credentials sign a transaction?
+ * (Only returns fail on a 'proxy' setup for airgapped operation)
+ *
+ * @return {undefined}
+ */
 API.prototype.canSign = function() {
   return this.credentials && this.credentials.canSign();
 };
@@ -494,7 +544,6 @@ API.prototype.openWallet = function(cb) {
     if (err) return cb(err);
     var wallet = ret.wallet;
 
-console.log('[api.js.434] HOLa'); //TODO
     if (wallet.status != 'complete')
       return cb();
 
@@ -534,6 +583,37 @@ console.log('[api.js.434] HOLa'); //TODO
     return cb(null, ret);
   });
 };
+
+
+/**
+ * sets up encryption for the extended private key
+ *
+ * @param {String} password Password used to encrypt
+ * @param {Object} opts optional: SJCL options to encrypt (.iter, .salt, etc).
+ * @return {undefined}
+ */
+API.prototype.setPrivateKeyEncryption = function(password, opts) {
+  this.credentials.setPrivateKeyEncryption(password, opts || API.privateKeyEncryptionOpts);
+};
+
+/**
+ * disables encryption for private key.
+ * wallet must be unlocked
+ *
+ */
+API.prototype.disablePrivateKeyEncryption = function(password, opts) {
+  return this.credentials.disablePrivateKeyEncryption();
+};
+
+/**
+ * Locks private key (removes the unencrypted version and keep only the encrypted)
+ *
+ * @return {undefined}
+ */
+API.prototype.lock = function() {
+  this.credentials.lock();
+};
+
 
 /**
  *
@@ -851,6 +931,8 @@ API.prototype.signTxProposal = function(txp, cb) {
   if (!self.canSign() && !txp.signatures)
     return cb(new Error('You do not have the required keys to sign transactions'));
 
+  if (self.isPrivKeyEncrypted())
+    return cb(new Error('Private Key is encrypted, cannot sign'));
 
   Verifier.checkTxProposal(self.credentials, txp, {
     payProGetter: self.payProGetter,
@@ -893,6 +975,9 @@ API.prototype.signTxProposalFromAirGapped = function(txp, encryptedPkr, m, n) {
 
   if (!self.canSign())
     throw new Error('You do not have the required keys to sign transactions');
+
+  if (self.isPrivKeyEncrypted())
+    return cb(new Error('Private Key is encrypted, cannot sign'));
 
   var publicKeyRing;
   try {
@@ -1204,10 +1289,12 @@ var $ = require('preconditions').singleton();
 var _ = require('lodash');
 var WalletUtils = require('bitcore-wallet-utils');
 var Bitcore = WalletUtils.Bitcore;
+var sjcl = require('sjcl');
 
 var FIELDS = [
   'network',
   'xPrivKey',
+  'xPrivKeyEncrypted',
   'xPubKey',
   'requestPrivKey',
   'requestPubKey',
@@ -1225,6 +1312,7 @@ var FIELDS = [
 
 var EXPORTABLE_FIELDS = [
   'xPrivKey',
+  'xPrivKeyEncrypted',
   'requestPrivKey',
   'xPubKey',
   'm',
@@ -1249,14 +1337,6 @@ Credentials.create = function(network) {
 Credentials.fromExtendedPrivateKey = function(xPrivKey) {
   var x = new Credentials();
   x.xPrivKey = xPrivKey;
-  x._expand();
-  return x;
-};
-
-Credentials.fromExtendedPublicKey = function(xPubKey, requestPrivKey) {
-  var x = new Credentials();
-  x.xPubKey = xPubKey;
-  x.requestPrivKey = requestPrivKey;
   x._expand();
   return x;
 };
@@ -1292,8 +1372,7 @@ Credentials.fromObj = function(obj) {
     x[k] = obj[k];
   });
 
-  $.checkState(x.xPrivKey || x.xPubKey, "invalid input");
-
+  $.checkState(x.xPrivKey || x.xPubKey || x.xPrivKeyEncrypted, "invalid input");
   return x;
 };
 
@@ -1331,6 +1410,52 @@ Credentials.prototype.hasWalletInfo = function() {
   return !!this.walletId;
 };
 
+Credentials.prototype.isPrivKeyEncrypted = function() {
+  return (!!this.xPrivKeyEncrypted) && !this.xPrivKey;
+};
+
+Credentials.prototype.hasPrivKeyEncrypted = function() {
+  return (!!this.xPrivKeyEncrypted);
+};
+
+Credentials.prototype.setPrivateKeyEncryption = function(password, opts) {
+  if (this.xPrivKeyEncrypted)
+    throw new Error('Encrypted Privkey Already exists');
+
+  if (!this.xPrivKey)
+    throw new Error('No private key to encrypt');
+
+
+  this.xPrivKeyEncrypted = sjcl.encrypt(password, this.xPrivKey, opts);
+  if (!this.xPrivKeyEncrypted)
+    throw new Error('Could not encrypt');
+};
+
+
+Credentials.prototype.disablePrivateKeyEncryption = function() {
+  if (!this.xPrivKeyEncrypted)
+    throw new Error('Private Key is not encrypted');
+
+  if (!this.xPrivKey)
+    throw new Error('Wallet is locked, cannot disable encryption');
+
+  this.xPrivKeyEncrypted = null;
+};
+
+
+Credentials.prototype.lock = function() {
+  if (!this.xPrivKeyEncrypted)
+    throw new Error('Could not lock, no encrypted private key');
+
+  delete this.xPrivKey;
+};
+
+Credentials.prototype.unlock = function(password) {
+  if (this.xPrivKeyEncrypted) {
+    this.xPrivKey = sjcl.decrypt(password, this.xPrivKeyEncrypted);
+  }
+};
+
 Credentials.prototype.addPublicKeyRing = function(publicKeyRing) {
   this.publicKeyRing = _.clone(publicKeyRing);
 };
@@ -1350,7 +1475,7 @@ Credentials.prototype.updatePublicKeyRing = function(publicKeyRing) {
 };
 
 Credentials.prototype.canSign = function() {
-  return !!this.xPrivKey;
+  return (!!this.xPrivKey || !!this.xPrivKeyEncrypted);
 };
 
 Credentials.prototype.isComplete = function() {
@@ -1385,7 +1510,7 @@ Credentials.prototype.exportCompressed = function() {
   return JSON.stringify(values);
 };
 
-Credentials.importCompressed = function(compressed) {
+Credentials.importCompressed = function(compressed, password) {
   var list;
   try {
     list = JSON.parse(compressed);
@@ -1402,7 +1527,12 @@ Credentials.importCompressed = function(compressed) {
   _.each(EXPORTABLE_FIELDS, function(field, i) {
     x[field] = list[i];
   });
+
+  if (password)
+    x.unlock(password);
   x._expand();
+  if (password)
+    x.lock(password);
 
   x.network = WalletUtils.getNetworkFromXPubKey(x.xPubKey);
   x.publicKeyRing.push({
@@ -1450,7 +1580,7 @@ Credentials.fromOldCopayWallet = function(w){
 
 module.exports = Credentials;
 
-},{"bitcore-wallet-utils":36,"lodash":114,"preconditions":115}],6:[function(require,module,exports){
+},{"bitcore-wallet-utils":36,"lodash":114,"preconditions":115,"sjcl":205}],6:[function(require,module,exports){
 /**
  * The official client library for bitcore-wallet-service.
  * @module Client
@@ -13417,6 +13547,7 @@ Address._transformString = function(data, network, type) {
   if (typeof(data) !== 'string') {
     throw new TypeError('data parameter supplied is not a string.');
   }
+  data = data.trim();
   var addressBuffer = Base58Check.decode(data);
   var info = Address._transformBuffer(addressBuffer, network, type);
   return info;
@@ -22713,12 +22844,12 @@ Transaction.prototype.verify = function() {
   if (isCoinbase) {
     var buf = this.inputs[0]._script.toBuffer();
     if (buf.length < 2 || buf.length > 100) {
-      return 'coinbase trasaction script size invalid';
+      return 'coinbase transaction script size invalid';
     }
   } else {
     for (i = 0; i < this.inputs.length; i++) {
       if (this.inputs[i].isNull()) {
-        return 'tranasction input ' + i + ' has null input';
+        return 'transaction input ' + i + ' has null input';
       }
     }
   }
@@ -37346,7 +37477,7 @@ module.exports.WordArray = X64WordArray
 },{"./word-array":110}],112:[function(require,module,exports){
 module.exports={
   "name": "bitcore",
-  "version": "0.11.6",
+  "version": "0.11.7",
   "description": "A pure and powerful JavaScript Bitcoin library.",
   "author": {
     "name": "BitPay",
@@ -37444,13 +37575,13 @@ module.exports={
     "sinon": "^1.13.0"
   },
   "license": "MIT",
-  "gitHead": "ad060436b3333e8c1b4385c62726a255e6a04f48",
+  "gitHead": "c486ff7b85e8dcf9fc5773eba6cbdec61c58835d",
   "bugs": {
     "url": "https://github.com/bitpay/bitcore/issues"
   },
   "homepage": "https://github.com/bitpay/bitcore",
-  "_id": "bitcore@0.11.6",
-  "_shasum": "88329d23725e822ff585193d86c967b9dc5238eb",
+  "_id": "bitcore@0.11.7",
+  "_shasum": "2c41f6e12a16283d4780b3312fa6c38237f113f2",
   "_from": "bitcore@^0.11.6",
   "_npmVersion": "1.4.28",
   "_npmUser": {
@@ -37476,12 +37607,11 @@ module.exports={
     }
   ],
   "dist": {
-    "shasum": "88329d23725e822ff585193d86c967b9dc5238eb",
-    "tarball": "http://registry.npmjs.org/bitcore/-/bitcore-0.11.6.tgz"
+    "shasum": "2c41f6e12a16283d4780b3312fa6c38237f113f2",
+    "tarball": "http://registry.npmjs.org/bitcore/-/bitcore-0.11.7.tgz"
   },
   "directories": {},
-  "_resolved": "https://registry.npmjs.org/bitcore/-/bitcore-0.11.6.tgz",
-  "readme": "ERROR: No README data found!"
+  "_resolved": "https://registry.npmjs.org/bitcore/-/bitcore-0.11.7.tgz"
 }
 
 },{}],113:[function(require,module,exports){
@@ -54049,6 +54179,17 @@ var util = require('util')
   , net = require('net')
   , tls = require('tls')
   , AgentSSL = require('https').Agent
+  
+function getConnectionName(host, port) {  
+  var name = ''
+  if (typeof host === 'string') {
+    name = host + ':' + port
+  } else {
+    // For node.js v012.0 and iojs-v1.5.1, host is an object. And any existing localAddress is part of the connection name.
+    name = host.host + ':' + host.port + ':' + (host.localAddress ? (host.localAddress + ':') : ':')
+  }
+  return name
+}    
 
 function ForeverAgent(options) {
   var self = this
@@ -54059,7 +54200,8 @@ function ForeverAgent(options) {
   self.maxSockets = self.options.maxSockets || Agent.defaultMaxSockets
   self.minSockets = self.options.minSockets || ForeverAgent.defaultMinSockets
   self.on('free', function(socket, host, port) {
-    var name = host + ':' + port
+    var name = getConnectionName(host, port)
+
     if (self.requests[name] && self.requests[name].length) {
       self.requests[name].shift().onSocket(socket)
     } else if (self.sockets[name].length < self.minSockets) {
@@ -54090,13 +54232,14 @@ ForeverAgent.defaultMinSockets = 5
 ForeverAgent.prototype.createConnection = net.createConnection
 ForeverAgent.prototype.addRequestNoreuse = Agent.prototype.addRequest
 ForeverAgent.prototype.addRequest = function(req, host, port) {
+  var name = getConnectionName(host, port)
+  
   if (typeof host !== 'string') {
     var options = host
     port = options.port
     host = options.host
   }
 
-  var name = host + ':' + port
   if (this.freeSockets[name] && this.freeSockets[name].length > 0 && !req.useChunkedEncodingByDefault) {
     var idleSocket = this.freeSockets[name].pop()
     idleSocket.removeListener('error', idleSocket._onIdleError)
@@ -54673,10 +54816,10 @@ var compile = function(schema, cache, root, reporter, opts) {
       if (reporter === true) {
         validate('if (validate.errors === null) validate.errors = []')
         if (verbose) {
-          validate('validate.errors.push({field:%s,message:%s,value:%s})', JSON.stringify(formatName(prop || name)), JSON.stringify(msg), value || name)
+          validate('validate.errors.push({field:%s,message:%s,value:%s})', JSON.stringify(formatName(prop || name)), JSON.stringify(msg), value || name)
         } else {
           var n = gensym('error')
-          scope[n] = {field:formatName(prop || name), message:msg}
+          scope[n] = {field:formatName(prop || name), message:msg}
           validate('validate.errors.push(%s)', n)
         }
       }
