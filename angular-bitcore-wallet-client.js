@@ -2,7 +2,7 @@
 var bwcModule = angular.module('bwcModule', []);
 var Client = require('bitcore-wallet-client');
 
-bwcModule.constant('MODULE_VERSION', '0.0.13');
+bwcModule.constant('MODULE_VERSION', '0.0.14');
 
 bwcModule.provider("bwcService", function() {
   var provider = {};
@@ -1094,6 +1094,25 @@ API.prototype.getTxHistory = function(opts, cb) {
     return cb(null, txs);
   });
 };
+
+/**
+ * getTx
+ *
+ * @param {String} TransactionId
+ * @return {Callback} cb - Return error or transaction
+ */
+API.prototype.getTx = function(id, cb) {
+  $.checkState(this.credentials && this.credentials.isComplete());
+
+  var self = this;
+  var url = '/v1/txproposals/' + id;
+  this._doGetRequest(url, function(err, tx) {
+    if (err) return cb(err);
+    API._processTxps([tx], self.credentials.sharedEncryptingKey);
+    return cb(null, tx);
+  });
+};
+ 
 
 /**
  * Start an address scanning process.
@@ -37611,7 +37630,8 @@ module.exports={
     "tarball": "http://registry.npmjs.org/bitcore/-/bitcore-0.11.7.tgz"
   },
   "directories": {},
-  "_resolved": "https://registry.npmjs.org/bitcore/-/bitcore-0.11.7.tgz"
+  "_resolved": "https://registry.npmjs.org/bitcore/-/bitcore-0.11.7.tgz",
+  "readme": "ERROR: No README data found!"
 }
 
 },{}],113:[function(require,module,exports){
