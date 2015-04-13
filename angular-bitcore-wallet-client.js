@@ -2,7 +2,7 @@
 var bwcModule = angular.module('bwcModule', []);
 var Client = require('bitcore-wallet-client');
 
-bwcModule.constant('MODULE_VERSION', '0.0.14');
+bwcModule.constant('MODULE_VERSION', '0.0.15');
 
 bwcModule.provider("bwcService", function() {
   var provider = {};
@@ -146,6 +146,14 @@ API.prototype.initNotifications = function(cb) {
     if (data.creatorId != self.credentials.copayerId) {
       self.emit('notification', data);
     }
+  });
+
+  socket.on('reconnecting', function() {
+    self.emit('reconnecting');
+  });
+
+  socket.on('reconnect', function() {
+    self.emit('reconnect');
   });
 
   socket.on('challenge', function(nonce) {
@@ -371,9 +379,12 @@ API.prototype._doRequest = function(method, url, args, cb) {
   }));
 
   this.request(args, function(err, res, body) {
+    if (err) return cb(err);
+
     log.debug(util.inspect(body, {
       depth: 10
     }));
+
     if (res.statusCode != 200) {
       if (res.statusCode == 404)
         return cb({
@@ -382,8 +393,6 @@ API.prototype._doRequest = function(method, url, args, cb) {
 
       return cb(err || API._parseError(body));
     }
-
-    if (err) return cb(err);
 
     if (body === '{"error":"read ECONNRESET"}')
       return cb(JSON.parse(body));
@@ -1108,11 +1117,12 @@ API.prototype.getTx = function(id, cb) {
   var url = '/v1/txproposals/' + id;
   this._doGetRequest(url, function(err, tx) {
     if (err) return cb(err);
+
     API._processTxps([tx], self.credentials.sharedEncryptingKey);
     return cb(null, tx);
   });
 };
- 
+
 
 /**
  * Start an address scanning process.
