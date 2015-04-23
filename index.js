@@ -1,14 +1,15 @@
 var bwcModule = angular.module('bwcModule', []);
 var Client = require('bitcore-wallet-client');
 
-bwcModule.constant('MODULE_VERSION', '0.0.19');
+bwcModule.constant('MODULE_VERSION', '0.0.20');
 
 bwcModule.provider("bwcService", function() {
   var provider = {};
 
   var config = {
     baseUrl: 'http://localhost:3001/bws/api',
-    verbose: null
+    verbose: null,
+    transports: null
   };
 
   provider.setBaseUrl = function(url) {
@@ -24,6 +25,10 @@ bwcModule.provider("bwcService", function() {
 
     service.setBaseUrl = function(url) {
       config.baseUrl = url;
+    };
+
+    service.setTransports = function(transports) {
+      config.transports = transports;
     };
 
     service.getBitcore = function() {
@@ -42,6 +47,7 @@ bwcModule.provider("bwcService", function() {
       var bwc = new Client({
         baseUrl: config.baseUrl,
         verbose: config.verbose,
+        transports: config.transports
       });
       if (walletData)
         bwc.import(walletData);
