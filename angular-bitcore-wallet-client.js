@@ -2,7 +2,7 @@
 var bwcModule = angular.module('bwcModule', []);
 var Client = require('bitcore-wallet-client');
 
-bwcModule.constant('MODULE_VERSION', '0.0.18');
+bwcModule.constant('MODULE_VERSION', '0.0.19');
 
 bwcModule.provider("bwcService", function() {
   var provider = {};
@@ -111,6 +111,9 @@ function API(opts) {
   this.payProGetter = null; // Only for testing
   this.doNotVerifyPayPro = opts.doNotVerifyPayPro;
 
+  this.transports = opts.transports || ['polling', 'websocket'];
+
+
   if (this.verbose) {
     log.setLevel('debug');
   } else {
@@ -132,7 +135,7 @@ API.prototype.initNotifications = function(cb) {
     'reconnection': true,
     'reconnectionDelay': 1000,
     'secure': true,
-    'transports': ['polling', 'websocket'],
+    'transports': self.transports,
   });
 
   socket.on('unauthorized', function() {
@@ -68917,27 +68920,36 @@ function alignedWrite(buffer) {
 
 }).call(this,require("buffer").Buffer)
 },{"buffer":272,"stream":438,"string_decoder":439,"util":442}],199:[function(require,module,exports){
-/*
- * Copyright GoInstant, Inc. and other contributors. All rights reserved.
- * Permission is hereby granted, free of charge, to any person obtaining a copy
- * of this software and associated documentation files (the "Software"), to
- * deal in the Software without restriction, including without limitation the
- * rights to use, copy, modify, merge, publish, distribute, sublicense, and/or
- * sell copies of the Software, and to permit persons to whom the Software is
- * furnished to do so, subject to the following conditions:
+/*!
+ * Copyright (c) 2015, Salesforce.com, Inc.
+ * All rights reserved.
  *
- * The above copyright notice and this permission notice shall be included in
- * all copies or substantial portions of the Software.
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions are met:
  *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
- * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
- * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
- * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
- * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
- * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS
- * IN THE SOFTWARE.
+ * 1. Redistributions of source code must retain the above copyright notice,
+ * this list of conditions and the following disclaimer.
+ *
+ * 2. Redistributions in binary form must reproduce the above copyright notice,
+ * this list of conditions and the following disclaimer in the documentation
+ * and/or other materials provided with the distribution.
+ *
+ * 3. Neither the name of Salesforce.com nor the names of its contributors may
+ * be used to endorse or promote products derived from this software without
+ * specific prior written permission.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+ * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+ * ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
+ * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+ * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+ * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+ * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+ * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+ * POSSIBILITY OF SUCH DAMAGE.
  */
-
 'use strict';
 var net = require('net');
 var urlParse = require('url').parse;
@@ -68963,7 +68975,13 @@ var COOKIE_OCTETS = new RegExp('^'+COOKIE_OCTET.source+'$');
 
 // The name/key cannot be empty but the value can (S5.2):
 var COOKIE_PAIR_STRICT = new RegExp('^('+TOKEN.source+'+)=("?)('+COOKIE_OCTET.source+'*)\\2$');
-var COOKIE_PAIR = /^([^=\s]+)\s*=\s*("?)\s*(.*)\s*\2\s*$/;
+
+// Double quotes are part of the value (see: S4.1.1).
+// '\r', '\n' and '\0' should be treated as a terminator in the "relaxed" mode
+// (see: https://github.com/ChromiumWebApps/chromium/blob/b3d3b4da8bb94c1b2e061600df106d590fda3620/net/cookies/parsed_cookie.cc#L60)
+// '=' and ';' are attribute/values separators
+// (see: https://github.com/ChromiumWebApps/chromium/blob/b3d3b4da8bb94c1b2e061600df106d590fda3620/net/cookies/parsed_cookie.cc#L64)
+var COOKIE_PAIR = /^([^=;]+)\s*=\s*(("?)[^\n\r\0]*\3)/;
 
 // RFC6265 S4.1.1 defines extension-av as 'any CHAR except CTLs or ";"'
 // Note ';' is \x3B
@@ -68974,21 +68992,10 @@ var PATH_VALUE = NON_CTL_SEMICOLON;
 // Used for checking whether or not there is a trailing semi-colon
 var TRAILING_SEMICOLON = /;+$/;
 
-/* RFC6265 S5.1.1.5:
- * [fail if] the day-of-month-value is less than 1 or greater than 31
- */
-var DAY_OF_MONTH = /^(0?[1-9]|[12][0-9]|3[01])$/;
+var DAY_OF_MONTH = /^(\d{1,2})[^\d]*$/;
+var TIME = /^(\d{1,2})[^\d]*:(\d{1,2})[^\d]*:(\d{1,2})[^\d]*$/;
+var MONTH = /^(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)/i;
 
-/* RFC6265 S5.1.1.5:
- * [fail if]
- * *  the hour-value is greater than 23,
- * *  the minute-value is greater than 59, or
- * *  the second-value is greater than 59.
- */
-var TIME = /(0?[0-9]|1[0-9]|2[0-3]):([0-5][0-9]):([0-5][0-9])/;
-var STRICT_TIME = /^(0?[0-9]|1[0-9]|2[0-3]):([0-5][0-9]):([0-5][0-9])$/;
-
-var MONTH = /^(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)$/i;
 var MONTH_TO_NUM = {
   jan:0, feb:1, mar:2, apr:3, may:4, jun:5,
   jul:6, aug:7, sep:8, oct:9, nov:10, dec:11
@@ -69000,10 +69007,12 @@ var NUM_TO_DAY = [
   'Sun','Mon','Tue','Wed','Thu','Fri','Sat'
 ];
 
-var YEAR = /^([1-9][0-9]{1,3})$/; // 2 to 4 digits
+var YEAR = /^(\d{2}|\d{4})$/; // 2 to 4 digits
 
 var MAX_TIME = 2147483647000; // 31-bit max
 var MIN_TIME = 0; // 31-bit min
+
+var cookiesCreated = 0; // Number of cookies created in runtime
 
 
 // RFC6265 S5.1.1 date parser:
@@ -69011,7 +69020,6 @@ function parseDate(str,strict) {
   if (!str) {
     return;
   }
-  var found_time, found_dom, found_month, found_year;
 
   /* RFC6265 S5.1.1:
    * 2. Process each date-token sequentially in the order the date-tokens
@@ -69021,6 +69029,13 @@ function parseDate(str,strict) {
   if (!tokens) {
     return;
   }
+
+  var hour = null;
+  var minutes = null;
+  var seconds = null;
+  var day = null;
+  var month = null;
+  var year = null;
 
   var date = new Date();
   date.setMilliseconds(0);
@@ -69039,13 +69054,22 @@ function parseDate(str,strict) {
      * the date-token, respectively.  Skip the remaining sub-steps and continue
      * to the next date-token.
      */
-    if (!found_time) {
-      result = (strict ? STRICT_TIME : TIME).exec(token);
+    if (seconds === null) {
+      result = TIME.exec(token);
       if (result) {
-        found_time = true;
-        date.setUTCHours(result[1]);
-        date.setUTCMinutes(result[2]);
-        date.setUTCSeconds(result[3]);
+        hour = parseInt(result[1], 10);
+        minutes = parseInt(result[2], 10);
+        seconds = parseInt(result[3], 10);
+        /* RFC6265 S5.1.1.5:
+         * [fail if]
+         * *  the hour-value is greater than 23,
+         * *  the minute-value is greater than 59, or
+         * *  the second-value is greater than 59.
+         */
+        if(hour > 23 || minutes > 59 || seconds > 59) {
+          return;
+        }
+
         continue;
       }
     }
@@ -69055,11 +69079,16 @@ function parseDate(str,strict) {
      * the day-of-month-value to the number denoted by the date-token.  Skip
      * the remaining sub-steps and continue to the next date-token.
      */
-    if (!found_dom) {
+    if (day === null) {
       result = DAY_OF_MONTH.exec(token);
       if (result) {
-        found_dom = true;
-        date.setUTCDate(result[1]);
+        day = parseInt(result, 10);
+        /* RFC6265 S5.1.1.5:
+         * [fail if] the day-of-month-value is less than 1 or greater than 31
+         */
+        if(day < 1 || day > 31) {
+          return;
+        }
         continue;
       }
     }
@@ -69069,11 +69098,10 @@ function parseDate(str,strict) {
      * the month denoted by the date-token.  Skip the remaining sub-steps and
      * continue to the next date-token.
      */
-    if (!found_month) {
+    if (month === null) {
       result = MONTH.exec(token);
       if (result) {
-        found_month = true;
-        date.setUTCMonth(MONTH_TO_NUM[result[1].toLowerCase()]);
+        month = MONTH_TO_NUM[result[1].toLowerCase()];
         continue;
       }
     }
@@ -69083,10 +69111,10 @@ function parseDate(str,strict) {
      * denoted by the date-token.  Skip the remaining sub-steps and continue to
      * the next date-token.
      */
-    if (!found_year) {
+    if (year === null) {
       result = YEAR.exec(token);
       if (result) {
-        var year = result[0];
+        year = parseInt(result[0], 10);
         /* From S5.1.1:
          * 3.  If the year-value is greater than or equal to 70 and less
          * than or equal to 99, increment the year-value by 1900.
@@ -69102,20 +69130,17 @@ function parseDate(str,strict) {
         if (year < 1601) {
           return; // 5. ... the year-value is less than 1601
         }
-
-        found_year = true;
-        date.setUTCFullYear(year);
         continue;
       }
     }
   }
 
-  if (!(found_time && found_dom && found_month && found_year)) {
+  if (seconds === null || day === null || month === null || year === null) {
     return; // 5. ... at least one of the found-day-of-month, found-month, found-
             // year, or found-time flags is not set,
   }
 
-  return date;
+  return new Date(Date.UTC(year, month, day, hour, minutes, seconds));
 }
 
 function formatDate(date) {
@@ -69277,7 +69302,9 @@ function parse(str, strict) {
 
   var c = new Cookie();
   c.key = result[1]; // the regexp should trim() already
-  c.value = result[3]; // [2] is quotes or empty-string
+  c.value = strict ? result[3] : result[2]; // [2] is quotes or empty-string in strict mode
+  c.key = c.key.trim();
+  c.value = c.value.trim();
 
   if (firstSemi === -1) {
     return c;
@@ -69376,6 +69403,7 @@ function parse(str, strict) {
        * context of the parsing.
        */
       if (!av_value || av_value.substr(0,1) != "/") {
+        c.path = null;
         if(strict){return;}else{break;}
       }
       c.path = av_value;
@@ -69405,6 +69433,10 @@ function parse(str, strict) {
 
   // ensure a default date for sorting:
   c.creation = new Date();
+  //NOTE: add runtime index for the cookieCompare() to resolve the situation when Date's precision is not enough .
+  //Store initial UTC time as well, so we will be able to determine if we need to fallback to the Date object.
+  c._creationRuntimeIdx = ++cookiesCreated;
+  c._initialCreationTime = c.creation.getTime();
   return c;
 }
 
@@ -69458,9 +69490,18 @@ function cookieCompare(a,b) {
   if (deltaLen !== 0) {
     return deltaLen;
   }
+
+  var aTime = a.creation ? a.creation.getTime() : MAX_TIME;
+  var bTime = b.creation ? b.creation.getTime() : MAX_TIME;
+
+  // NOTE: if creation dates are equal and they were not modified from the outside,
+  // then use _creationRuntimeIdx for the comparison.
+  if(aTime === bTime && aTime === a._initialCreationTime && bTime === b._initialCreationTime) {
+    return a._creationRuntimeIdx - b._creationRuntimeIdx;
+  }
+
   // ascending for time: a CMP b
-  return (a.creation ? a.creation.getTime() : MAX_TIME) -
-         (b.creation ? b.creation.getTime() : MAX_TIME);
+  return aTime - bTime;
 }
 
 // Gives the permutation of all possible domainMatch()es of a given domain. The
@@ -69507,6 +69548,9 @@ function permutePath(path) {
   return permutations;
 }
 
+function getCookieContext(url) {
+  return (url instanceof Object) ? url : urlParse(decodeURI(url));
+}
 
 function Cookie (opts) {
   if (typeof opts !== "object") {
@@ -69538,6 +69582,8 @@ Cookie.prototype.extensions = null;
 Cookie.prototype.hostOnly = null; // boolean when set
 Cookie.prototype.pathIsDefault = null; // boolean when set
 Cookie.prototype.creation = null; // Date when set; defaulted by Cookie.parse
+Cookie.prototype._initialCreationTime = null; // Used to determine if cookie.creation was modified
+Cookie.prototype._creationRuntimeIdx = null; // Runtime index of the created cookie, used in cookieCompare()
 Cookie.prototype.lastAccessed = null; // Date when set
 
 var cookieProperties = Object.freeze(Object.keys(Cookie.prototype).map(function(p) {
@@ -69739,7 +69785,7 @@ var CAN_BE_SYNC = [];
 CAN_BE_SYNC.push('setCookie');
 CookieJar.prototype.setCookie = function(cookie, url, options, cb) {
   var err;
-  var context = (url instanceof Object) ? url : urlParse(url);
+  var context = getCookieContext(url);
   if (options instanceof Function) {
     cb = options;
     options = {};
@@ -69788,15 +69834,12 @@ CookieJar.prototype.setCookie = function(cookie, url, options, cb) {
     cookie.domain = host;
   }
 
-  // S5.3 step 7: "Otherwise, set the cookie's path to the default-path of the
-  // request-uri"
-  if (!cookie.path) {
+  //S5.2.4 If the attribute-value is empty or if the first character of the
+  //attribute-value is not %x2F ("/"):
+  //Let cookie-path be the default-path.
+  if (!cookie.path || cookie.path[0] !== '/') {
     cookie.path = defaultPath(context.pathname);
     cookie.pathIsDefault = true;
-  } else {
-    if (cookie.path.length > 1 && cookie.path.substr(-1) == '/') {
-      cookie.path = cookie.path.slice(0,-1);
-    }
   }
 
   // S5.3 step 8: NOOP; secure attribute
@@ -69853,7 +69896,7 @@ CookieJar.prototype.setCookie = function(cookie, url, options, cb) {
 // RFC6365 S5.4
 CAN_BE_SYNC.push('getCookies');
 CookieJar.prototype.getCookies = function(url, options, cb) {
-  var context = (url instanceof Object) ? url : urlParse(url);
+  var context = getCookieContext(url);
   if (options instanceof Function) {
     cb = options;
     options = {};
@@ -69954,9 +69997,12 @@ CookieJar.prototype.getCookieString = function(/*..., cb*/) {
     if (err) {
       cb(err);
     } else {
-      cb(null, cookies.map(function(c){
-        return c.cookieString();
-      }).join('; '));
+      cb(null, cookies
+        .sort(cookieCompare)
+        .map(function(c){
+          return c.cookieString();
+        })
+        .join('; '));
     }
   };
   args.push(next);
@@ -70026,11 +70072,41 @@ module.exports = {
 };
 
 },{"./memstore":200,"./pubsuffix":201,"./store":202,"net":256,"punycode":423,"url":440}],200:[function(require,module,exports){
+/*!
+ * Copyright (c) 2015, Salesforce.com, Inc.
+ * All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions are met:
+ *
+ * 1. Redistributions of source code must retain the above copyright notice,
+ * this list of conditions and the following disclaimer.
+ *
+ * 2. Redistributions in binary form must reproduce the above copyright notice,
+ * this list of conditions and the following disclaimer in the documentation
+ * and/or other materials provided with the distribution.
+ *
+ * 3. Neither the name of Salesforce.com nor the names of its contributors may
+ * be used to endorse or promote products derived from this software without
+ * specific prior written permission.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+ * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+ * ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
+ * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+ * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+ * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+ * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+ * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+ * POSSIBILITY OF SUCH DAMAGE.
+ */
 'use strict';
 var tough = require('./cookie');
 var Store = require('./store').Store;
 var permuteDomain = tough.permuteDomain;
-var permutePath = tough.permutePath;
+var pathMatch = tough.pathMatch;
 var util = require('util');
 
 function MemoryCookieStore() {
@@ -70065,7 +70141,7 @@ MemoryCookieStore.prototype.findCookies = function(domain, path, cb) {
 
   var pathMatcher;
   if (!path) {
-    // null or '/' means "all paths"
+    // null means "all paths"
     pathMatcher = function matchAll(domainIndex) {
       for (var curPath in domainIndex) {
         var pathIndex = domainIndex[curPath];
@@ -70075,30 +70151,20 @@ MemoryCookieStore.prototype.findCookies = function(domain, path, cb) {
       }
     };
 
-  } else if (path === '/') {
-    pathMatcher = function matchSlash(domainIndex) {
-      var pathIndex = domainIndex['/'];
-      if (!pathIndex) {
-        return;
-      }
-      for (var key in pathIndex) {
-        results.push(pathIndex[key]);
-      }
-    };
-
   } else {
-    var paths = permutePath(path) || [path];
     pathMatcher = function matchRFC(domainIndex) {
-      paths.forEach(function(curPath) {
-        var pathIndex = domainIndex[curPath];
-        if (!pathIndex) {
-          return;
-        }
-        for (var key in pathIndex) {
-          results.push(pathIndex[key]);
-        }
-      });
-    };
+       //NOTE: we should use path-match algorithm from S5.1.4 here
+       //(see : https://github.com/ChromiumWebApps/chromium/blob/b3d3b4da8bb94c1b2e061600df106d590fda3620/net/cookies/canonical_cookie.cc#L299)
+       Object.keys(domainIndex).forEach(function (cookiePath) {
+         if (pathMatch(path, cookiePath)) {
+           var pathIndex = domainIndex[cookiePath];
+
+           for (var key in pathIndex) {
+             results.push(pathIndex[key]);
+           }
+         }
+       });
+     };
   }
 
   var domains = permuteDomain(domain) || [domain];
@@ -70157,25 +70223,35 @@ MemoryCookieStore.prototype.removeCookies = function removeCookies(domain, path,
  ****************************************************/
 
 module.exports.getPublicSuffix = function getPublicSuffix(domain) {
-  /*
-   * Copyright GoInstant, Inc. and other contributors. All rights reserved.
-   * Permission is hereby granted, free of charge, to any person obtaining a copy
-   * of this software and associated documentation files (the "Software"), to
-   * deal in the Software without restriction, including without limitation the
-   * rights to use, copy, modify, merge, publish, distribute, sublicense, and/or
-   * sell copies of the Software, and to permit persons to whom the Software is
-   * furnished to do so, subject to the following conditions:
+  /*!
+   * Copyright (c) 2015, Salesforce.com, Inc.
+   * All rights reserved.
    *
-   * The above copyright notice and this permission notice shall be included in
-   * all copies or substantial portions of the Software.
+   * Redistribution and use in source and binary forms, with or without
+   * modification, are permitted provided that the following conditions are met:
    *
-   * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-   * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-   * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-   * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-   * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
-   * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS
-   * IN THE SOFTWARE.
+   * 1. Redistributions of source code must retain the above copyright notice,
+   * this list of conditions and the following disclaimer.
+   *
+   * 2. Redistributions in binary form must reproduce the above copyright notice,
+   * this list of conditions and the following disclaimer in the documentation
+   * and/or other materials provided with the distribution.
+   *
+   * 3. Neither the name of Salesforce.com nor the names of its contributors may
+   * be used to endorse or promote products derived from this software without
+   * specific prior written permission.
+   *
+   * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+   * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+   * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+   * ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
+   * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+   * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+   * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+   * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+   * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+   * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+   * POSSIBILITY OF SUCH DAMAGE.
    */
   if (!domain) return null;
   if (domain.match(/^\./)) return null;
@@ -70222,6 +70298,36 @@ var index = module.exports.index = Object.freeze(
 // END of automatically generated file
 
 },{}],202:[function(require,module,exports){
+/*!
+ * Copyright (c) 2015, Salesforce.com, Inc.
+ * All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions are met:
+ *
+ * 1. Redistributions of source code must retain the above copyright notice,
+ * this list of conditions and the following disclaimer.
+ *
+ * 2. Redistributions in binary form must reproduce the above copyright notice,
+ * this list of conditions and the following disclaimer in the documentation
+ * and/or other materials provided with the distribution.
+ *
+ * 3. Neither the name of Salesforce.com nor the names of its contributors may
+ * be used to endorse or promote products derived from this software without
+ * specific prior written permission.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+ * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+ * ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
+ * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+ * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+ * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+ * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+ * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+ * POSSIBILITY OF SUCH DAMAGE.
+ */
 'use strict';
 /*jshint unused:false */
 
