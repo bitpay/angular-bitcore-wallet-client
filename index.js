@@ -1,7 +1,7 @@
 var bwcModule = angular.module('bwcModule', []);
 var Client = require('bitcore-wallet-client');
 
-bwcModule.constant('MODULE_VERSION', '0.0.20');
+bwcModule.constant('MODULE_VERSION', '0.0.21');
 
 bwcModule.provider("bwcService", function() {
   var provider = {};
