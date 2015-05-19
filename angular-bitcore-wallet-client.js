@@ -2,7 +2,7 @@
 var bwcModule = angular.module('bwcModule', []);
 var Client = require('bitcore-wallet-client');
 
-bwcModule.constant('MODULE_VERSION', '0.0.21');
+bwcModule.constant('MODULE_VERSION', '0.0.22');
 
 bwcModule.provider("bwcService", function() {
   var provider = {};
@@ -397,8 +397,6 @@ API.prototype._doRequest = function(method, url, args, cb) {
   }));
 
   this.request(args, function(err, res, body) {
-    if (err) return cb(err);
-
     log.debug(util.inspect(body, {
       depth: 10
     }));
@@ -409,7 +407,7 @@ API.prototype._doRequest = function(method, url, args, cb) {
           code: 'NOTFOUND'
         });
 
-      return cb(err || API._parseError(body));
+      return cb(API._parseError(body));
     }
 
     if (body === '{"error":"read ECONNRESET"}')
@@ -790,6 +788,40 @@ API.prototype.getStatus = function(cb) {
     return cb(err, result);
   });
 };
+
+
+/**
+ * Get copayer preferences
+ *
+ * @param {Callback} cb
+ * @return {Callback} cb - Return error or object
+ */
+API.prototype.getPreferences = function(cb) {
+  $.checkState(this.credentials && this.credentials.isComplete());
+  $.checkArgument(cb);
+
+  var self = this;
+  self._doGetRequest('/v1/preferences/', function(err, preferences) {
+    if (err) return cb(err);
+    return cb(null, preferences);
+  });
+};
+
+/**
+ * Save copayer preferences
+ *
+ * @param {Object} preferences
+ * @param {Callback} cb
+ * @return {Callback} cb - Return error or object
+ */
+API.prototype.savePreferences = function(preferences, cb) {
+  $.checkState(this.credentials && this.credentials.isComplete());
+  $.checkArgument(cb);
+
+  var self = this;
+  self._doPutRequest('/v1/preferences/', preferences, cb);
+};
+
 
 API.prototype._computeProposalSignature = function(args) {
   $.shouldBeNumber(args.amount);
@@ -2187,9 +2219,6 @@ module.exports = Verifier;
     };
 
     var _each = function (arr, iterator) {
-        if (arr.forEach) {
-            return arr.forEach(iterator);
-        }
         for (var i = 0; i < arr.length; i += 1) {
             iterator(arr[i], i, arr);
         }
@@ -2966,23 +2995,26 @@ module.exports = Verifier;
             pause: function () {
                 if (q.paused === true) { return; }
                 q.paused = true;
-                q.process();
             },
             resume: function () {
                 if (q.paused === false) { return; }
                 q.paused = false;
-                q.process();
+                // Need to call q.process once per concurrent
+                // worker to preserve full concurrency after pause
+                for (var w = 1; w <= q.concurrency; w++) {
+                    async.setImmediate(q.process);
+                }
             }
         };
         return q;
     };
-    
+
     async.priorityQueue = function (worker, concurrency) {
-        
+
         function _compareTasks(a, b){
           return a.priority - b.priority;
         };
-        
+
         function _binarySearch(sequence, item, compare) {
           var beg = -1,
               end = sequence.length - 1;
@@ -2996,7 +3028,7 @@ module.exports = Verifier;
           }
           return beg;
         }
-        
+
         function _insert(q, data, priority, callback) {
           if (!q.started){
             q.started = true;
@@ -3018,7 +3050,7 @@ module.exports = Verifier;
                   priority: priority,
                   callback: typeof callback === 'function' ? callback : null
               };
-              
+
               q.tasks.splice(_binarySearch(q.tasks, item, _compareTasks) + 1, 0, item);
 
               if (q.saturated && q.tasks.length === q.concurrency) {
@@ -3027,15 +3059,15 @@ module.exports = Verifier;
               async.setImmediate(q.process);
           });
         }
-        
+
         // Start with a normal queue
         var q = async.queue(worker, concurrency);
-        
+
         // Override push to accept second parameter representing priority
         q.push = function (data, priority, callback) {
           _insert(q, data, priority, callback);
         };
-        
+
         // Remove unshift function
         delete q.unshift;
 
@@ -61960,14 +61992,32 @@ var get = function(obj, additionalSchemas, ptr) {
   try {
     return jsonpointer.get(obj, decodeURI(ptr))
   } catch (err) {
-    var other = additionalSchemas[ptr] || additionalSchemas[ptr.replace(/^#/, '')]
+    var end = ptr.indexOf('#')
+    var other
+    // external reference
+    if (end !== 0) {
+      // fragment doesn't exist.
+      if (end === -1) {
+        other = additionalSchemas[ptr]
+      } else {
+        var ext = ptr.slice(0, end)
+        other = additionalSchemas[ext]
+        var fragment = ptr.slice(end).replace(/^#/, '')
+        try {
+          return jsonpointer.get(other, fragment)
+        } catch (err) {}
+      }
+    } else {
+      other = additionalSchemas[ptr]
+    }
     return other || null
   }
 }
 
 var formatName = function(field) {
-  var pattern = /\[[^\[\]"]+\]/
-  while (pattern.test(field)) field = field.replace(pattern, '.*')
+  field = JSON.stringify(field)
+  var pattern = /\[([^\[\]"]+)\]/
+  while (pattern.test(field)) field = field.replace(pattern, '."+$1+"')
   return field
 }
 
@@ -62068,11 +62118,9 @@ var compile = function(schema, cache, root, reporter, opts) {
       if (reporter === true) {
         validate('if (validate.errors === null) validate.errors = []')
         if (verbose) {
-          validate('validate.errors.push({field:%s,message:%s,value:%s})', JSON.stringify(formatName(prop || name)), JSON.stringify(msg), value || name)
+          validate('validate.errors.push({field:%s,message:%s,value:%s})', formatName(prop || name), JSON.stringify(msg), value || name)
         } else {
-          var n = gensym('error')
-          scope[n] = {field:formatName(prop || name), message:msg}
-          validate('validate.errors.push(%s)', n)
+          validate('validate.errors.push({field:%s,message:%s})', formatName(prop || name), JSON.stringify(msg))
         }
       }
     }
@@ -62559,7 +62607,12 @@ var gen = function(obj, prop) {
 }
 
 gen.valid = isProperty
+gen.property = function (prop) {
+ return isProperty(prop) ? prop : JSON.stringify(prop)
+}
+
 module.exports = gen
+
 },{"is-property":149}],149:[function(require,module,exports){
 "use strict"
 function isProperty(str) {
@@ -68434,45 +68487,33 @@ module.exports.isWritable = isWritable
 module.exports.isDuplex   = isDuplex
 
 },{"stream":438}],187:[function(require,module,exports){
-module.exports = stringify;
+exports = module.exports = stringify
+exports.getSerialize = serializer
 
-function getSerialize (fn, decycle) {
-  var seen = [], keys = [];
-  decycle = decycle || function(key, value) {
-    return '[Circular ' + getPath(value, seen, keys) + ']'
-  };
+function stringify(obj, replacer, spaces, cycleReplacer) {
+  return JSON.stringify(obj, serializer(replacer, cycleReplacer), spaces)
+}
+
+function serializer(replacer, cycleReplacer) {
+  var stack = [], keys = []
+
+  if (cycleReplacer == null) cycleReplacer = function(key, value) {
+    if (stack[0] === value) return "[Circular ~]"
+    return "[Circular ~." + keys.slice(0, stack.indexOf(value)).join(".") + "]"
+  }
+
   return function(key, value) {
-    var ret = value;
-    if (typeof value === 'object' && value) {
-      if (seen.indexOf(value) !== -1)
-        ret = decycle(key, value);
-      else {
-        seen.push(value);
-        keys.push(key);
-      }
+    if (stack.length > 0) {
+      var thisPos = stack.indexOf(this)
+      ~thisPos ? stack.splice(thisPos + 1) : stack.push(this)
+      ~thisPos ? keys.splice(thisPos, Infinity, key) : keys.push(key)
+      if (~stack.indexOf(value)) value = cycleReplacer.call(this, key, value)
     }
-    if (fn) ret = fn(key, ret);
-    return ret;
+    else stack.push(value)
+
+    return replacer == null ? value : replacer.call(this, key, value)
   }
 }
-
-function getPath (value, seen, keys) {
-  var index = seen.indexOf(value);
-  var path = [ keys[index] ];
-  for (index--; index >= 0; index--) {
-    if (seen[index][ path[0] ] === value) {
-      value = seen[index];
-      path.unshift(keys[index]);
-    }
-  }
-  return '~' + path.join('.');
-}
-
-function stringify(obj, fn, spaces, decycle) {
-  return JSON.stringify(obj, getSerialize(fn, decycle), spaces);
-}
-
-stringify.getSerialize = getSerialize;
 
 },{}],188:[function(require,module,exports){
 
@@ -69054,6 +69095,11 @@ module.exports={
   "application/mads+xml": {
     "source": "iana",
     "extensions": ["mads"]
+  },
+  "application/manifest+json": {
+    "charset": "UTF-8",
+    "compressible": true,
+    "extensions": ["webmanifest"]
   },
   "application/marc": {
     "source": "iana",
@@ -70915,6 +70961,10 @@ module.exports={
   "application/vnd.mfmp": {
     "source": "iana",
     "extensions": ["mfm"]
+  },
+  "application/vnd.micro+json": {
+    "source": "iana",
+    "compressible": true
   },
   "application/vnd.micrografx.flo": {
     "source": "iana",
@@ -73897,6 +73947,9 @@ module.exports={
     "source": "iana",
     "extensions": ["xif"]
   },
+  "image/vnd.zbrush.pcx": {
+    "source": "iana"
+  },
   "image/webp": {
     "source": "apache",
     "extensions": ["webp"]
@@ -73925,6 +73978,10 @@ module.exports={
   "image/x-mrsid-image": {
     "source": "apache",
     "extensions": ["sid"]
+  },
+  "image/x-ms-bmp": {
+    "compressible": true,
+    "extensions": ["bmp"]
   },
   "image/x-pcx": {
     "source": "apache",
@@ -75297,11 +75354,7 @@ internals.parseValues = function (str, options) {
             var key = Utils.decode(part.slice(0, pos));
             var val = Utils.decode(part.slice(pos + 1));
 
-            if (Object.prototype.hasOwnProperty(key)) {
-                continue;
-            }
-
-            if (!obj.hasOwnProperty(key)) {
+            if (!Object.prototype.hasOwnProperty.call(obj, key)) {
                 obj[key] = val;
             }
             else {
