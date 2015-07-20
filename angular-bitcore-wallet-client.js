@@ -2,7 +2,7 @@
 var bwcModule = angular.module('bwcModule', []);
 var Client = require('bitcore-wallet-client');
 
-bwcModule.constant('MODULE_VERSION', '0.0.27');
+bwcModule.constant('MODULE_VERSION', '0.0.28');
 
 bwcModule.provider("bwcService", function() {
   var provider = {};
@@ -399,7 +399,6 @@ API.prototype._doRequest = function(method, url, args, cb) {
     log.debug(util.inspect(body, {
       depth: 10
     }));
-
     if (!res) {
       return cb({
         code: 'CONNERROR',
@@ -651,6 +650,24 @@ API.prototype.lock = function() {
   this.credentials.lock();
 };
 
+
+/**
+ * Get current fee levels for the specified network
+ *
+ * @param {string} network - 'livenet' (default) or 'testnet'
+ * @param {Callback} cb
+ * @returns {Callback} cb - Returns error or an object with status information
+ */
+API.prototype.getFeeLevels = function(network, cb) {
+  var self = this;
+
+  $.checkArgument(network || _.contains(['livenet', 'testnet'], network));
+
+  self._doGetRequest('/v1/feelevels/?network=' + (network || 'livenet'), function(err, result) {
+    if (err) return cb(err);
+    return cb(err, result);
+  });
+};
 
 /**
  *
@@ -90694,7 +90711,7 @@ module.exports={
   "author": {
     "name": "BitPay Inc"
   },
-  "version": "0.0.41",
+  "version": "0.0.42",
   "keywords": [
     "bitcoin",
     "copay",
@@ -90726,7 +90743,7 @@ module.exports={
     "uglify": "^0.1.1"
   },
   "devDependencies": {
-    "bitcore-wallet-service": "0.0.42",
+    "bitcore-wallet-service": "0.0.45",
     "chai": "^1.9.1",
     "coveralls": "^2.11.2",
     "grunt-jsdoc": "^0.5.8",
@@ -90755,15 +90772,15 @@ module.exports={
       "email": "ematiu@gmail.com"
     }
   ],
-  "gitHead": "36519085fbcf5701332ea75166812e1bfd3d0637",
+  "gitHead": "f0f97b1c034b98bfa21ca42d05f7df2e75cb0bf4",
   "homepage": "https://github.com/bitpay/bitcore-wallet-client",
-  "_id": "bitcore-wallet-client@0.0.41",
-  "_shasum": "0880f7bf5ac1204b8899af55c571b1010983d156",
-  "_from": "bitcore-wallet-client@0.0.41",
+  "_id": "bitcore-wallet-client@0.0.42",
+  "_shasum": "25113394ac15968642a7793db7212118554c07e7",
+  "_from": "bitcore-wallet-client@0.0.42",
   "_npmVersion": "1.4.28",
   "_npmUser": {
-    "name": "isocolsky",
-    "email": "jungans@gmail.com"
+    "name": "cmgustavo",
+    "email": "cmgustavo83@gmail.com"
   },
   "maintainers": [
     {
@@ -90780,12 +90797,11 @@ module.exports={
     }
   ],
   "dist": {
-    "shasum": "0880f7bf5ac1204b8899af55c571b1010983d156",
-    "tarball": "http://registry.npmjs.org/bitcore-wallet-client/-/bitcore-wallet-client-0.0.41.tgz"
+    "shasum": "25113394ac15968642a7793db7212118554c07e7",
+    "tarball": "http://registry.npmjs.org/bitcore-wallet-client/-/bitcore-wallet-client-0.0.42.tgz"
   },
   "directories": {},
-  "_resolved": "https://registry.npmjs.org/bitcore-wallet-client/-/bitcore-wallet-client-0.0.41.tgz",
-  "readme": "ERROR: No README data found!"
+  "_resolved": "https://registry.npmjs.org/bitcore-wallet-client/-/bitcore-wallet-client-0.0.42.tgz"
 }
 
 },{}],268:[function(require,module,exports){
