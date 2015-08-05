@@ -2,7 +2,7 @@
 var bwcModule = angular.module('bwcModule', []);
 var Client = require('bitcore-wallet-client');
 
-bwcModule.constant('MODULE_VERSION', '0.1.0');
+bwcModule.constant('MODULE_VERSION', '0.1.1');
 
 bwcModule.provider("bwcService", function() {
   var provider = {};
@@ -417,19 +417,19 @@ API.prototype._doRequest = function(method, url, args, cb) {
     }));
     if (!res) {
       return cb({
-        code: 'CONNERROR',
+        code: 'CONNECTION_ERROR',
       });
     }
 
     if (res.statusCode != 200) {
       if (res.statusCode == 404)
         return cb({
-          code: 'NOTFOUND'
+          code: 'NOT_FOUND'
         });
 
       if (!res.statusCode)
         return cb({
-          code: 'CONNERROR',
+          code: 'CONNECTION_ERROR',
         });
 
       return cb(API._parseError(body));
@@ -820,7 +820,7 @@ API.prototype.recreateWallet = function(cb) {
   };
   self._doPostRequest('/v1/wallets/', args, function(err, body) {
     // Ignore error is wallet already exist
-    if (err && err.code != 'WEXISTS') return cb(err);
+    if (err && err.code != 'WALLET_ALREADY_EXISTS') return cb(err);
 
 
     var i = 1;
@@ -830,7 +830,7 @@ API.prototype.recreateWallet = function(cb) {
         isTemporaryRequestKey: item.isTemporaryRequestKey,
       }, function(err) {
         //Ignore error is copayer already in wallet
-        if (err && err.code == 'CINWALLET') return next();
+        if (err && err.code == 'COPAYER_IN_WALLET') return next();
         return next(err);
       });
     }, cb);
@@ -1459,7 +1459,7 @@ API.prototype.createWalletFromOldCopay = function(username, password, blob, cb) 
       id: walletId,
       walletPrivKey: walletPrivKey,
     }, function(err, secret) {
-      if (err && err.code == 'WEXISTS') {
+      if (err && err.code == 'WALLET_ALREADY_EXISTS') {
 
         self.credentials.addWalletInfo(walletId, walletName, m, n,
           walletPrivKey, copayerName);
@@ -89262,7 +89262,7 @@ module.exports={
   "author": {
     "name": "BitPay Inc"
   },
-  "version": "0.1.0",
+  "version": "0.1.1",
   "keywords": [
     "bitcoin",
     "copay",
@@ -89294,7 +89294,7 @@ module.exports={
     "uglify": "^0.1.1"
   },
   "devDependencies": {
-    "bitcore-wallet-service": "0.1.0",
+    "bitcore-wallet-service": "0.1.1",
     "chai": "^1.9.1",
     "coveralls": "^2.11.2",
     "grunt-jsdoc": "^0.5.8",
@@ -89321,11 +89321,11 @@ module.exports={
       "email": "ematiu@gmail.com"
     }
   ],
-  "gitHead": "c97a3686e7acabc03837d90e5f47bedc8e6bc584",
+  "gitHead": "5cc2b69a95b794fad8523691faec768c5f802f9b",
   "homepage": "https://github.com/bitpay/bitcore-wallet-client",
-  "_id": "bitcore-wallet-client@0.1.0",
-  "_shasum": "4abd1fe430a64087429b04520e1a12cdad5cf730",
-  "_from": "bitcore-wallet-client@0.1.0",
+  "_id": "bitcore-wallet-client@0.1.1",
+  "_shasum": "d460ec1c6ff8d9979dd639afeb268f08bdedc9ae",
+  "_from": "bitcore-wallet-client@0.1.1",
   "_npmVersion": "1.4.28",
   "_npmUser": {
     "name": "cmgustavo",
@@ -89346,11 +89346,11 @@ module.exports={
     }
   ],
   "dist": {
-    "shasum": "4abd1fe430a64087429b04520e1a12cdad5cf730",
-    "tarball": "http://registry.npmjs.org/bitcore-wallet-client/-/bitcore-wallet-client-0.1.0.tgz"
+    "shasum": "d460ec1c6ff8d9979dd639afeb268f08bdedc9ae",
+    "tarball": "http://registry.npmjs.org/bitcore-wallet-client/-/bitcore-wallet-client-0.1.1.tgz"
   },
   "directories": {},
-  "_resolved": "https://registry.npmjs.org/bitcore-wallet-client/-/bitcore-wallet-client-0.1.0.tgz"
+  "_resolved": "https://registry.npmjs.org/bitcore-wallet-client/-/bitcore-wallet-client-0.1.1.tgz"
 }
 
 },{}],267:[function(require,module,exports){
