@@ -2,7 +2,7 @@
 var bwcModule = angular.module('bwcModule', []);
 var Client = require('bitcore-wallet-client');
 
-bwcModule.constant('MODULE_VERSION', '1.1.0');
+bwcModule.constant('MODULE_VERSION', '1.1.1');
 
 bwcModule.provider("bwcService", function() {
   var provider = {};
@@ -134,14 +134,15 @@ API.privateKeyEncryptionOpts = {
 
 API.prototype.initNotifications = function(cb) {
   log.warn('DEPRECATED: use initialize() instead.');
-  this.initialize(cb);
+  this.initialize({}, cb);
 };
 
-API.prototype.initialize = function(cb) {
+API.prototype.initialize = function(opts, cb) {
   $.checkState(this.credentials);
 
   var self = this;
-  self._initNotifications();
+
+  self._initNotifications(opts);
   return cb();
 };
 
@@ -198,6 +199,8 @@ API.prototype._initNotifications = function(opts) {
 };
 
 API.prototype._disposeNotifications = function() {
+  var self = this;
+
   if (self.notificationsIntervalId) {
     clearInterval(self.notificationsIntervalId);
     self.notificationsIntervalId = null;
@@ -81084,7 +81087,7 @@ module.exports={
   "gitHead": "fb1456177c9b51445afa34656eb314c70c2adcd2",
   "_id": "tough-cookie@2.2.0",
   "_shasum": "d4ce661075e5fddb7f20341d3f9931a6fbbadde0",
-  "_from": "tough-cookie@>=2.2.0 <2.3.0",
+  "_from": "tough-cookie@>=0.12.0",
   "_npmVersion": "2.11.2",
   "_nodeVersion": "0.12.5",
   "_npmUser": {
@@ -82860,7 +82863,7 @@ module.exports={
   "author": {
     "name": "BitPay Inc"
   },
-  "version": "1.1.0",
+  "version": "1.1.1",
   "license": "MIT",
   "keywords": [
     "bitcoin",
@@ -82872,7 +82875,7 @@ module.exports={
   ],
   "main": "index.js",
   "repository": {
-    "url": "git+ssh://git@github.com/bitpay/bitcore-wallet-client.git",
+    "url": "git@github.com:bitpay/bitcore-wallet-client.git",
     "type": "git"
   },
   "bugs": {
@@ -82921,16 +82924,15 @@ module.exports={
       "email": "ematiu@gmail.com"
     }
   ],
-  "gitHead": "5b1f7def4231a94be6320611444657559b69b3bd",
-  "homepage": "https://github.com/bitpay/bitcore-wallet-client#readme",
-  "_id": "bitcore-wallet-client@1.1.0",
-  "_shasum": "89dbfdaec0611fe9c12618757e3c3befeea265cf",
-  "_from": "bitcore-wallet-client@1.1.0",
-  "_npmVersion": "2.11.3",
-  "_nodeVersion": "0.12.7",
+  "gitHead": "ebb0530dc203dc639c13baa280c4e8f50dec0db7",
+  "homepage": "https://github.com/bitpay/bitcore-wallet-client",
+  "_id": "bitcore-wallet-client@1.1.1",
+  "_shasum": "ab691583f309a491c13725fba1c9eb532c69e2d9",
+  "_from": "bitcore-wallet-client@1.1.1",
+  "_npmVersion": "1.4.28",
   "_npmUser": {
-    "name": "ematiu",
-    "email": "ematiu@gmail.com"
+    "name": "isocolsky",
+    "email": "jungans@gmail.com"
   },
   "maintainers": [
     {
@@ -82947,12 +82949,11 @@ module.exports={
     }
   ],
   "dist": {
-    "shasum": "89dbfdaec0611fe9c12618757e3c3befeea265cf",
-    "tarball": "http://registry.npmjs.org/bitcore-wallet-client/-/bitcore-wallet-client-1.1.0.tgz"
+    "shasum": "ab691583f309a491c13725fba1c9eb532c69e2d9",
+    "tarball": "http://registry.npmjs.org/bitcore-wallet-client/-/bitcore-wallet-client-1.1.1.tgz"
   },
   "directories": {},
-  "_resolved": "https://registry.npmjs.org/bitcore-wallet-client/-/bitcore-wallet-client-1.1.0.tgz",
-  "readme": "ERROR: No README data found!"
+  "_resolved": "https://registry.npmjs.org/bitcore-wallet-client/-/bitcore-wallet-client-1.1.1.tgz"
 }
 
 },{}],281:[function(require,module,exports){
