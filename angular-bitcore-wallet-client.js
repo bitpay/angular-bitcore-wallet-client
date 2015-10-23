@@ -2,7 +2,7 @@
 var bwcModule = angular.module('bwcModule', []);
 var Client = require('bitcore-wallet-client');
 
-bwcModule.constant('MODULE_VERSION', '1.1.1');
+bwcModule.constant('MODULE_VERSION', '1.1.2');
 
 bwcModule.provider("bwcService", function() {
   var provider = {};
@@ -188,13 +188,14 @@ API.prototype._initNotifications = function(opts) {
   opts = opts || {};
 
   var interval = opts.notificationIntervalSeconds || 5;
-  var firstTime = true;
   self.notificationsIntervalId = setInterval(function() {
-    if (firstTime) {
-      firstTime = false;
-      return;
-    }
-    self._fetchLatestNotifications(interval, function() {});
+    self._fetchLatestNotifications(interval, function(err) {
+      if (err) {
+        if (err.code == 'NOT_FOUND' || err.code == 'NOT_AUTHORIZED') {
+          self._disposeNotifications();
+        }
+      }
+    });
   }, interval * 1000);
 };
 
@@ -335,21 +336,32 @@ API._signRequest = function(method, url, args, privKey) {
 /**
  * Seed from random
  *
- * @param {String} network
+ * @param {Object} opts
+ * @param {String} opts.network - default 'livenet'
  */
-API.prototype.seedFromRandom = function(network) {
-  this.credentials = Credentials.create(network);
+API.prototype.seedFromRandom = function(opts) {
+  $.checkArgument(arguments.length <= 1, 'DEPRECATED: only 1 argument accepted.');
+  $.checkArgument(_.isUndefined(opts) || _.isObject(opts), 'DEPRECATED: argument should be an options object.');
+
+  opts = opts || {};
+  this.credentials = Credentials.create(opts.network || 'livenet');
 };
 
 /**
  * Seed from random with mnemonic
  *
- * @param {String} network
- * @param {String} Optional: BIP39 passphrase
- * @param {String} Optional: BIP39 language
+ * @param {Object} opts
+ * @param {String} opts.network - default 'livenet'
+ * @param {String} opts.passphrase
+ * @param {Number} opts.language - default 'en'
+ * @param {Number} opts.account - default 0
  */
-API.prototype.seedFromRandomWithMnemonic = function(network, passphrase, language) {
-  this.credentials = Credentials.createWithMnemonic(network, passphrase, language);
+API.prototype.seedFromRandomWithMnemonic = function(opts) {
+  $.checkArgument(arguments.length <= 1, 'DEPRECATED: only 1 argument accepted.');
+  $.checkArgument(_.isUndefined(opts) || _.isObject(opts), 'DEPRECATED: argument should be an options object.');
+
+  opts = opts || {};
+  this.credentials = Credentials.createWithMnemonic(opts.network || 'livenet', opts.passphrase, opts.language || 'en', opts.account || 0);
 };
 
 API.prototype.getMnemonic = function() {
@@ -382,23 +394,32 @@ API.prototype.seedFromExtendedPrivateKey = function(xPrivKey) {
  * Can throw an error if mnemonic is invalid
  *
  * @param {String} BIP39 words
- * @param {String} Optional: BIP39 passphrase
- * @param {String} Optional: 'livenet' or 'testnet'
+ * @param {Object} opts
+ * @param {String} opts.network - default 'livenet'
+ * @param {String} opts.passphrase
+ * @param {Number} opts.account - default 0
  */
-API.prototype.seedFromMnemonic = function(words, passphrase, network) {
-  this.credentials = Credentials.fromMnemonic(words, passphrase, network);
+API.prototype.seedFromMnemonic = function(words, opts) {
+  $.checkArgument(_.isUndefined(opts) || _.isObject(opts), 'DEPRECATED: second argument should be an options object.');
+
+  opts = opts || {};
+  this.credentials = Credentials.fromMnemonic(opts.network || 'livenet', words, opts.passphrase, opts.account || 0);
 };
 
 /**
  * Seed from external wallet public key
  *
- * @param {String} xPubKey - Extended public key
- * @param {String} source - name of external wallet source (ex: ledger)
- * @param {String} entropySourceHex -  an HEX string containing random data, that can be reproducible by the device. NOTE: It should not be possible to derive entropySourceHex from xPubkey.
+ * @param {String} xPubKey
+ * @param {String} source - A name identifying the source of the xPrivKey (e.g. ledger, TREZOR, ...)
+ * @param {String} entropySourceHex - A HEX string containing pseudo-random data, that can be deterministically derived from the xPrivKey, and should not be derived from xPubKey.
+ * @param {Object} opts
+ * @param {Number} opts.account - default 0
  */
-API.prototype.seedFromExtendedPublicKey = function(xPubKey, source, entropySourceHex) {
-  $.checkArgument(!arguments[3], "DEPRECATED: seedFromExtendedPublicKey should receive only 3 parameters");
-  this.credentials = Credentials.fromExtendedPublicKey(xPubKey, source, entropySourceHex);
+API.prototype.seedFromExtendedPublicKey = function(xPubKey, source, entropySourceHex, opts) {
+  $.checkArgument(_.isUndefined(opts) || _.isObject(opts));
+
+  opts = opts || {};
+  this.credentials = Credentials.fromExtendedPublicKey(xPubKey, source, entropySourceHex, opts.account || 0);
 }
 
 
@@ -472,11 +493,22 @@ API.prototype._import = function(cb) {
   });
 };
 
+/**
+ * Import from Mnemonics (language autodetected)
+ * Can throw an error if mnemonic is invalid
+ *
+ * @param {String} BIP39 words
+ * @param {Object} opts
+ * @param {String} opts.network - default 'livenet'
+ * @param {String} opts.passphrase
+ * @param {Number} opts.account - default 0
+ */
 API.prototype.importFromMnemonic = function(words, opts, cb) {
   log.debug('Importing from 12 Words');
 
+  opts = opts || {};
   try {
-    this.credentials = Credentials.fromMnemonic(words, opts.passphrase, opts.network);
+    this.credentials = Credentials.fromMnemonic(opts.network || 'livenet', words, opts.passphrase, opts.account || 0);
   } catch (e) {
     log.info('Mnemonic error:', e);
     return cb(Errors.INVALID_BACKUP);
@@ -484,7 +516,6 @@ API.prototype.importFromMnemonic = function(words, opts, cb) {
 
   this._import(cb);
 };
-
 
 API.prototype.importFromExtendedPrivateKey = function(xPrivKey, cb) {
   log.debug('Importing from Extended Private Key');
@@ -498,12 +529,24 @@ API.prototype.importFromExtendedPrivateKey = function(xPrivKey, cb) {
   this._import(cb);
 };
 
+/**
+ * Import from Extended Public Key
+ *
+ * @param {String} xPubKey
+ * @param {String} source - A name identifying the source of the xPrivKey
+ * @param {String} entropySourceHex - A HEX string containing pseudo-random data, that can be deterministically derived from the xPrivKey, and should not be derived from xPubKey.
+ * @param {Object} opts
+ * @param {Number} opts.account - default 0
+ */
+API.prototype.importFromExtendedPublicKey = function(xPubKey, source, entropySourceHex, opts, cb) {
+  $.checkArgument(arguments.length == 5, "DEPRECATED: should receive 5 arguments");
+  $.checkArgument(_.isUndefined(opts) || _.isObject(opts));
+  $.shouldBeFunction(cb);
 
-API.prototype.importFromExtendedPublicKey = function(xPubKey, source, entropySourceHex, cb) {
-  $.checkArgument(!arguments[4], "DEPRECATED: seedFromExtendedPublicKey should receive only 3 parameters");
+  opts = opts || {};
   log.debug('Importing from Extended Private Key');
   try {
-    this.credentials = Credentials.fromExtendedPublicKey(xPubKey, source, entropySourceHex);
+    this.credentials = Credentials.fromExtendedPublicKey(xPubKey, source, entropySourceHex, opts.account || 0);
   } catch (e) {
     log.info('xPriv error:', e);
     return cb(Errors.INVALID_BACKUP);
@@ -957,7 +1000,9 @@ API.prototype.createWallet = function(walletName, copayerName, m, n, opts, cb) {
 
   if (!self.credentials) {
     log.info('Generating new keys');
-    self.seedFromRandom(network);
+    self.seedFromRandom({
+      network: network
+    });
   } else {
     log.info('Using existing keys');
   }
@@ -1018,7 +1063,9 @@ API.prototype.joinWallet = function(secret, copayerName, opts, cb) {
   }
 
   if (!self.credentials) {
-    self.seedFromRandom(secretData.network);
+    self.seedFromRandom({
+      network: secretData.network
+    });
   }
 
   self._doJoinWallet(secretData.walletId, secretData.walletPrivKey, self.credentials.xPubKey, self.credentials.requestPubKey, copayerName, {
@@ -1810,7 +1857,7 @@ API.prototype.addAccess = function(opts, cb) {
   var requestPubKey = reqPrivKey.toPublicKey().toString();
 
   var xPriv = new Bitcore.HDPrivateKey(this.credentials.xPrivKey)
-    .derive(WalletUtils.getBaseAddressDerivationPath(this.credentials.derivationStrategy, this.credentials.network, 0));
+    .derive(this.credentials.getBaseAddressDerivationPath());
   var sig = WalletUtils.signRequestPubKey(requestPubKey, xPriv);
   var copayerId = this.credentials.copayerId;
 
@@ -1866,15 +1913,23 @@ var FIELDS = [
   'entropySource',
   'mnemonicHasPassphrase',
   'derivationStrategy',
+  'account',
   'addressType',
 ];
 
 function Credentials() {
   this.version = '1.0.0';
   this.derivationStrategy = WalletUtils.DERIVATION_STRATEGIES.BIP44;
+  this.account = 0;
+};
+
+function _checkNetwork(network) {
+  if (!_.contains(['livenet', 'testnet'], network)) throw new Error('Invalid network');
 };
 
 Credentials.create = function(network) {
+  _checkNetwork(network);
+
   var x = new Credentials();
 
   x.network = network;
@@ -1891,12 +1946,10 @@ var wordsForLang = {
   'fr': Mnemonic.Words.FRENCH,
 };
 
-Credentials.createWithMnemonic = function(network, passphrase, language) {
-  if (!language)
-    language = 'en';
-
-  if (!wordsForLang[language])
-    throw new Error('Unsupported language');
+Credentials.createWithMnemonic = function(network, passphrase, language, account) {
+  _checkNetwork(network);
+  if (!wordsForLang[language]) throw new Error('Unsupported language');
+  $.shouldBeNumber(account);
 
   var m = new Mnemonic(wordsForLang[language]);
   while (!Mnemonic.isValid(m.toString())) {
@@ -1905,6 +1958,7 @@ Credentials.createWithMnemonic = function(network, passphrase, language) {
   var x = new Credentials();
 
   x.network = network;
+  x.account = account;
   x.xPrivKey = m.toHDPrivateKey(passphrase, network).toString();
   x._expand();
   x.mnemonic = m.phrase;
@@ -1921,28 +1975,33 @@ Credentials.fromExtendedPrivateKey = function(xPrivKey) {
 };
 
 // note that mnemonic / passphrase is NOT stored
-Credentials.fromMnemonic = function(words, passphrase, network) {
+Credentials.fromMnemonic = function(network, words, passphrase, account) {
+  _checkNetwork(network);
+  $.shouldBeNumber(account);
+
   var m = new Mnemonic(words);
   var x = new Credentials();
   x.xPrivKey = m.toHDPrivateKey(passphrase, network).toString();
   x.mnemonicHasPassphrase = !!passphrase;
+  x.account = account;
   x._expand();
   return x;
 };
 
 /* 
  * BWC uses
- * xPrivKey -> m/44'/0'/0' -> Base Address Key
- * so, xPubKey is PublicKeyHD(xPrivKey.derive("m/44'/0'/0'").
+ * xPrivKey -> m/44'/network'/account' -> Base Address Key
+ * so, xPubKey is PublicKeyHD(xPrivKey.derive("m/44'/network'/account'").
  *
  * For external sources, this derivation should be done before
- * call fromExternalWalletPublicKey
+ * call fromExtendedPublicKey
  *
- * entropySource should be a HEX string containing pseudorandom data, that can
- * be deterministic derived from the xPrivKey, and should not be derived from xPubKey
+ * entropySource should be a HEX string containing pseudo-random data, that can
+ * be deterministically derived from the xPrivKey, and should not be derived from xPubKey
  */
-Credentials.fromExtendedPublicKey = function(xPubKey, source, entropySourceHex, dummy) {
+Credentials.fromExtendedPublicKey = function(xPubKey, source, entropySourceHex, account) {
   $.checkArgument(entropySourceHex);
+  $.shouldBeNumber(account);
 
   var entropyBuffer = new Buffer(entropySourceHex, 'hex');
   //require at least 112 bits of entropy
@@ -1951,7 +2010,7 @@ Credentials.fromExtendedPublicKey = function(xPubKey, source, entropySourceHex, 
   var x = new Credentials();
   x.xPubKey = xPubKey;
   x.entropySource = Bitcore.crypto.Hash.sha256sha256(entropyBuffer).toString('hex');
-
+  x.account = account;
   x.externalSource = source;
   x._expand();
   return x;
@@ -1979,7 +2038,7 @@ Credentials.prototype._expand = function() {
     var xPrivKey = new Bitcore.HDPrivateKey.fromString(this.xPrivKey);
 
     // this extra derivation is not to share a non hardened xPubKey to the server.
-    var addressDerivation = xPrivKey.derive(WalletUtils.getBaseAddressDerivationPath(this.derivationStrategy, this.network, 0));
+    var addressDerivation = xPrivKey.derive(this.getBaseAddressDerivationPath());
     this.xPubKey = (new Bitcore.HDPublicKey(addressDerivation)).toString();
 
     var requestDerivation = xPrivKey.derive(WalletUtils.PATHS.REQUEST_KEY);
@@ -2015,6 +2074,7 @@ Credentials.fromObj = function(obj) {
 
   x.derivationStrategy = x.derivationStrategy || WalletUtils.DERIVATION_STRATEGIES.BIP45;
   x.addressType = x.addressType || WalletUtils.SCRIPT_TYPES.P2SH;
+  x.account = x.account || 0;
 
   $.checkState(x.xPrivKey || x.xPubKey || x.xPrivKeyEncrypted, "invalid input");
   return x;
@@ -2033,6 +2093,9 @@ Credentials.prototype.toObj = function() {
   return x;
 };
 
+Credentials.prototype.getBaseAddressDerivationPath = function() {
+  return WalletUtils.getBaseAddressDerivationPath(this.derivationStrategy, this.network, this.account);
+};
 
 Credentials.prototype.addWalletPrivateKey = function(walletPrivKey) {
   this.walletPrivKey = walletPrivKey;
@@ -62109,10 +62172,10 @@ var Buffer = require('buffer').Buffer;
 
 Readable.ReadableState = ReadableState;
 
-var EE = require('events').EventEmitter;
+var EE = require('events');
 
 /*<replacement>*/
-if (!EE.listenerCount) EE.listenerCount = function(emitter, type) {
+var EElistenerCount = function(emitter, type) {
   return emitter.listeners(type).length;
 };
 /*</replacement>*/
@@ -62139,9 +62202,10 @@ util.inherits = require('inherits');
 
 
 /*<replacement>*/
-var debug = require('util');
-if (debug && debug.debuglog) {
-  debug = debug.debuglog('stream');
+var debugUtil = require('util');
+var debug;
+if (debugUtil && debugUtil.debuglog) {
+  debug = debugUtil.debuglog('stream');
 } else {
   debug = function () {};
 }
@@ -62310,7 +62374,6 @@ function readableAddChunk(stream, state, chunk, encoding, addToFront) {
 }
 
 
-
 // if it's past the high water mark, we can push in some more.
 // Also, if we have no data yet, we can stand some
 // more bytes.  This is to work around cases where hwm=0,
@@ -62334,15 +62397,19 @@ Readable.prototype.setEncoding = function(enc) {
   return this;
 };
 
-// Don't raise the hwm > 128MB
+// Don't raise the hwm > 8MB
 var MAX_HWM = 0x800000;
-function roundUpToNextPowerOf2(n) {
+function computeNewHighWaterMark(n) {
   if (n >= MAX_HWM) {
     n = MAX_HWM;
   } else {
     // Get the next highest power of 2
     n--;
-    for (var p = 1; p < 32; p <<= 1) n |= n >> p;
+    n |= n >>> 1;
+    n |= n >>> 2;
+    n |= n >>> 4;
+    n |= n >>> 8;
+    n |= n >>> 16;
     n++;
   }
   return n;
@@ -62371,7 +62438,7 @@ function howMuchToRead(n, state) {
   // power of 2, to prevent increasing it excessively in tiny
   // amounts.
   if (n > state.highWaterMark)
-    state.highWaterMark = roundUpToNextPowerOf2(n);
+    state.highWaterMark = computeNewHighWaterMark(n);
 
   // don't have that much.  return null, unless we've ended.
   if (n > state.length) {
@@ -62677,7 +62744,7 @@ Readable.prototype.pipe = function(dest, pipeOpts) {
     debug('onerror', er);
     unpipe();
     dest.removeListener('error', onerror);
-    if (EE.listenerCount(dest, 'error') === 0)
+    if (EElistenerCount(dest, 'error') === 0)
       dest.emit('error', er);
   }
   // This is a brutally ugly hack to make sure that our error handler
@@ -62688,7 +62755,6 @@ Readable.prototype.pipe = function(dest, pipeOpts) {
     dest._events.error.unshift(onerror);
   else
     dest._events.error = [onerror, dest._events.error];
-
 
 
   // Both close and finish should trigger unpipe, but only once.
@@ -62727,7 +62793,7 @@ function pipeOnDrain(src) {
     debug('pipeOnDrain', state.awaitDrain);
     if (state.awaitDrain)
       state.awaitDrain--;
-    if (state.awaitDrain === 0 && EE.listenerCount(src, 'data')) {
+    if (state.awaitDrain === 0 && EElistenerCount(src, 'data')) {
       state.flowing = true;
       flow(src);
     }
@@ -62943,7 +63009,6 @@ Readable.prototype.wrap = function(stream) {
 };
 
 
-
 // exposed for testing purposes only.
 Readable._fromList = fromList;
 
@@ -63077,6 +63142,13 @@ util.inherits = require('inherits');
 /*</replacement>*/
 
 
+/*<replacement>*/
+var internalUtil = {
+  deprecate: require('util-deprecate')
+};
+/*</replacement>*/
+
+
 
 /*<replacement>*/
 var Stream;
@@ -63202,10 +63274,10 @@ WritableState.prototype.getBuffer = function writableStateGetBuffer() {
 
 (function (){try {
 Object.defineProperty(WritableState.prototype, 'buffer', {
-  get: require('util-deprecate')(function() {
+  get: internalUtil.deprecate(function() {
     return this.getBuffer();
-  }, '_writableState.buffer is deprecated. Use ' +
-      '_writableState.getBuffer() instead.')
+  }, '_writableState.buffer is deprecated. Use _writableState.getBuffer ' +
+     'instead.')
 });
 }catch(_){}}());
 
@@ -81087,7 +81159,7 @@ module.exports={
   "gitHead": "fb1456177c9b51445afa34656eb314c70c2adcd2",
   "_id": "tough-cookie@2.2.0",
   "_shasum": "d4ce661075e5fddb7f20341d3f9931a6fbbadde0",
-  "_from": "tough-cookie@>=0.12.0",
+  "_from": "tough-cookie@>=2.2.0 <2.3.0",
   "_npmVersion": "2.11.2",
   "_nodeVersion": "0.12.5",
   "_npmUser": {
@@ -82863,7 +82935,7 @@ module.exports={
   "author": {
     "name": "BitPay Inc"
   },
-  "version": "1.1.1",
+  "version": "1.1.2",
   "license": "MIT",
   "keywords": [
     "bitcoin",
@@ -82875,7 +82947,7 @@ module.exports={
   ],
   "main": "index.js",
   "repository": {
-    "url": "git@github.com:bitpay/bitcore-wallet-client.git",
+    "url": "git+ssh://git@github.com/bitpay/bitcore-wallet-client.git",
     "type": "git"
   },
   "bugs": {
@@ -82924,15 +82996,20 @@ module.exports={
       "email": "ematiu@gmail.com"
     }
   ],
-  "gitHead": "ebb0530dc203dc639c13baa280c4e8f50dec0db7",
-  "homepage": "https://github.com/bitpay/bitcore-wallet-client",
-  "_id": "bitcore-wallet-client@1.1.1",
-  "_shasum": "ab691583f309a491c13725fba1c9eb532c69e2d9",
-  "_from": "bitcore-wallet-client@1.1.1",
-  "_npmVersion": "1.4.28",
+  "gitHead": "f65c2a4e85ce96bd8fc29103786980b6037e41a7",
+  "homepage": "https://github.com/bitpay/bitcore-wallet-client#readme",
+  "_id": "bitcore-wallet-client@1.1.2",
+  "_shasum": "eb93d4c6a05391ec92b7144aa542c19b3f1779f4",
+  "_from": "bitcore-wallet-client@1.1.2",
+  "_npmVersion": "2.14.7",
+  "_nodeVersion": "4.2.1",
   "_npmUser": {
-    "name": "isocolsky",
-    "email": "jungans@gmail.com"
+    "name": "cmgustavo",
+    "email": "cmgustavo83@gmail.com"
+  },
+  "dist": {
+    "shasum": "eb93d4c6a05391ec92b7144aa542c19b3f1779f4",
+    "tarball": "http://registry.npmjs.org/bitcore-wallet-client/-/bitcore-wallet-client-1.1.2.tgz"
   },
   "maintainers": [
     {
@@ -82948,12 +83025,8 @@ module.exports={
       "email": "jungans@gmail.com"
     }
   ],
-  "dist": {
-    "shasum": "ab691583f309a491c13725fba1c9eb532c69e2d9",
-    "tarball": "http://registry.npmjs.org/bitcore-wallet-client/-/bitcore-wallet-client-1.1.1.tgz"
-  },
   "directories": {},
-  "_resolved": "https://registry.npmjs.org/bitcore-wallet-client/-/bitcore-wallet-client-1.1.1.tgz"
+  "_resolved": "https://registry.npmjs.org/bitcore-wallet-client/-/bitcore-wallet-client-1.1.2.tgz"
 }
 
 },{}],281:[function(require,module,exports){
