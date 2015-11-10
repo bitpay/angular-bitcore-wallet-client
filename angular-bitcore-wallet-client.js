@@ -2,7 +2,7 @@
 var bwcModule = angular.module('bwcModule', []);
 var Client = require('bitcore-wallet-client');
 
-bwcModule.constant('MODULE_VERSION', '1.1.4');
+bwcModule.constant('MODULE_VERSION', '1.1.5');
 
 bwcModule.provider("bwcService", function() {
   var provider = {};
@@ -2061,6 +2061,19 @@ Constants.PATHS = {
 
 Constants.BIP45_SHARED_INDEX = 0x80000000 - 1;
 
+Constants.UNITS = {
+  btc: {
+    toSatoshis: 100000000,
+    maxDecimals: 6,
+    minDecimals: 2,
+  },
+  bit: {
+    toSatoshis: 100,
+    maxDecimals: 0,
+    minDecimals: 0,
+  },
+};
+
 module.exports = Constants;
 
 },{}],5:[function(require,module,exports){
@@ -2219,7 +2232,31 @@ Utils.verifyRequestPubKey = function(requestPubKey, signature, xPubKey) {
   return Utils.verifyMessage(requestPubKey, signature, pub.toString());
 };
 
+Utils.formatAmount = function(satoshis, unit, opts) {
+  $.shouldBeNumber(satoshis);
+  $.checkArgument(_.contains(_.keys(Constants.UNITS), unit));
 
+  function addSeparators(nStr, thousands, decimal, minDecimals) {
+    nStr = nStr.replace('.', decimal);
+    var x = nStr.split(decimal);
+    var x0 = x[0];
+    var x1 = x[1];
+
+    x1 = _.dropRightWhile(x1, function(n, i) {
+      return n == '0' && i >= minDecimals;
+    }).join('');
+    var x2 = x.length > 1 ? decimal + x1 : '';
+
+    x0 = x0.replace(/\B(?=(\d{3})+(?!\d))/g, thousands);
+    return x0 + x2;
+  }
+
+  opts = opts || {};
+
+  var u = Constants.UNITS[unit];
+  var amount = (satoshis / u.toSatoshis).toFixed(u.maxDecimals);
+  return addSeparators(amount, opts.thousandsSeparator || ',', opts.decimalSeparator || '.', u.minDecimals);
+};
 
 module.exports = Utils;
 
@@ -28854,7 +28891,8 @@ module.exports={
     "tarball": "http://registry.npmjs.org/bitcore-lib/-/bitcore-lib-0.13.9.tgz"
   },
   "directories": {},
-  "_resolved": "https://registry.npmjs.org/bitcore-lib/-/bitcore-lib-0.13.9.tgz"
+  "_resolved": "https://registry.npmjs.org/bitcore-lib/-/bitcore-lib-0.13.9.tgz",
+  "readme": "ERROR: No README data found!"
 }
 
 },{}],142:[function(require,module,exports){
@@ -82965,7 +83003,7 @@ module.exports={
   "author": {
     "name": "BitPay Inc"
   },
-  "version": "1.1.4",
+  "version": "1.1.5",
   "license": "MIT",
   "keywords": [
     "bitcoin",
@@ -83028,11 +83066,11 @@ module.exports={
       "email": "ematiu@gmail.com"
     }
   ],
-  "gitHead": "974e8be196493afe10d641f86a5a974aef5060e1",
+  "gitHead": "0b785bcc8944508084b78f295baa14bc0df43466",
   "homepage": "https://github.com/bitpay/bitcore-wallet-client#readme",
-  "_id": "bitcore-wallet-client@1.1.4",
-  "_shasum": "ea9351cda26a525e7173958e71f7a3f71763c962",
-  "_from": "bitcore-wallet-client@1.1.4",
+  "_id": "bitcore-wallet-client@1.1.5",
+  "_shasum": "ead9946deeb94564218d79f202dba6dd6d05f3a5",
+  "_from": "bitcore-wallet-client@1.1.5",
   "_npmVersion": "2.14.7",
   "_nodeVersion": "4.2.1",
   "_npmUser": {
@@ -83040,8 +83078,8 @@ module.exports={
     "email": "cmgustavo83@gmail.com"
   },
   "dist": {
-    "shasum": "ea9351cda26a525e7173958e71f7a3f71763c962",
-    "tarball": "http://registry.npmjs.org/bitcore-wallet-client/-/bitcore-wallet-client-1.1.4.tgz"
+    "shasum": "ead9946deeb94564218d79f202dba6dd6d05f3a5",
+    "tarball": "http://registry.npmjs.org/bitcore-wallet-client/-/bitcore-wallet-client-1.1.5.tgz"
   },
   "maintainers": [
     {
@@ -83058,7 +83096,7 @@ module.exports={
     }
   ],
   "directories": {},
-  "_resolved": "https://registry.npmjs.org/bitcore-wallet-client/-/bitcore-wallet-client-1.1.4.tgz"
+  "_resolved": "https://registry.npmjs.org/bitcore-wallet-client/-/bitcore-wallet-client-1.1.5.tgz"
 }
 
 },{}],283:[function(require,module,exports){
