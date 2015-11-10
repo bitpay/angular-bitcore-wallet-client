@@ -2,7 +2,7 @@
 var bwcModule = angular.module('bwcModule', []);
 var Client = require('bitcore-wallet-client');
 
-bwcModule.constant('MODULE_VERSION', '1.1.3');
+bwcModule.constant('MODULE_VERSION', '1.1.4');
 
 bwcModule.provider("bwcService", function() {
   var provider = {};
@@ -64,7 +64,7 @@ bwcModule.provider("bwcService", function() {
 var Client = require('./lib');
 module.exports = Client;
 
-},{"./lib":7}],3:[function(require,module,exports){
+},{"./lib":11}],3:[function(require,module,exports){
 (function (process,Buffer){
 /** @namespace Client.API */
 'use strict';
@@ -74,11 +74,11 @@ var $ = require('preconditions').singleton();
 var util = require('util');
 var async = require('async');
 var events = require('events');
-var WalletUtils = require('bitcore-wallet-utils');
-var Bitcore = WalletUtils.Bitcore;
+var Bitcore = require('bitcore-lib');
 var sjcl = require('sjcl');
 var url = require('url');
 var querystring = require('querystring');
+var Stringify = require('json-stable-stringify');
 
 var request;
 if (process && !process.browser) {
@@ -86,6 +86,11 @@ if (process && !process.browser) {
 } else {
   request = require('browser-request');
 }
+
+var Common = require('./common');
+var Constants = Common.Constants;
+var Defaults = Common.Defaults;
+var Utils = Common.Utils;
 
 var PayPro = require('./paypro');
 var log = require('./log');
@@ -235,7 +240,7 @@ API.prototype.setNotificationsInterval = function(notificationIntervalSeconds) {
  */
 API._encryptMessage = function(message, encryptingKey) {
   if (!message) return null;
-  return WalletUtils.encryptMessage(message, encryptingKey);
+  return Utils.encryptMessage(message, encryptingKey);
 };
 
 /**
@@ -249,7 +254,7 @@ API._encryptMessage = function(message, encryptingKey) {
 API._decryptMessage = function(message, encryptingKey) {
   if (!message) return '';
   try {
-    return WalletUtils.decryptMessage(message, encryptingKey);
+    return Utils.decryptMessage(message, encryptingKey);
   } catch (ex) {
     return '<ECANNOTDECRYPT>';
   }
@@ -329,7 +334,7 @@ API._parseError = function(body) {
  */
 API._signRequest = function(method, url, args, privKey) {
   var message = [method.toLowerCase(), url, JSON.stringify(args)].join('|');
-  return WalletUtils.signMessage(message, privKey);
+  return Utils.signMessage(message, privKey);
 };
 
 
@@ -398,12 +403,13 @@ API.prototype.seedFromExtendedPrivateKey = function(xPrivKey) {
  * @param {String} opts.network - default 'livenet'
  * @param {String} opts.passphrase
  * @param {Number} opts.account - default 0
+ * @param {String} opts.derivationStrategy - default 'BIP44'
  */
 API.prototype.seedFromMnemonic = function(words, opts) {
   $.checkArgument(_.isUndefined(opts) || _.isObject(opts), 'DEPRECATED: second argument should be an options object.');
 
   opts = opts || {};
-  this.credentials = Credentials.fromMnemonic(opts.network || 'livenet', words, opts.passphrase, opts.account || 0);
+  this.credentials = Credentials.fromMnemonic(opts.network || 'livenet', words, opts.passphrase, opts.account || 0, opts.derivationStrategy || Constants.DERIVATION_STRATEGIES.BIP44);
 };
 
 /**
@@ -414,13 +420,14 @@ API.prototype.seedFromMnemonic = function(words, opts) {
  * @param {String} entropySourceHex - A HEX string containing pseudo-random data, that can be deterministically derived from the xPrivKey, and should not be derived from xPubKey.
  * @param {Object} opts
  * @param {Number} opts.account - default 0
+ * @param {String} opts.derivationStrategy - default 'BIP44'
  */
 API.prototype.seedFromExtendedPublicKey = function(xPubKey, source, entropySourceHex, opts) {
   $.checkArgument(_.isUndefined(opts) || _.isObject(opts));
 
   opts = opts || {};
-  this.credentials = Credentials.fromExtendedPublicKey(xPubKey, source, entropySourceHex, opts.account || 0);
-}
+  this.credentials = Credentials.fromExtendedPublicKey(xPubKey, source, entropySourceHex, opts.account || 0, opts.derivationStrategy || Constants.DERIVATION_STRATEGIES.BIP44);
+};
 
 
 /**
@@ -502,13 +509,14 @@ API.prototype._import = function(cb) {
  * @param {String} opts.network - default 'livenet'
  * @param {String} opts.passphrase
  * @param {Number} opts.account - default 0
+ * @param {String} opts.derivationStrategy - default 'BIP44'
  */
 API.prototype.importFromMnemonic = function(words, opts, cb) {
   log.debug('Importing from 12 Words');
 
   opts = opts || {};
   try {
-    this.credentials = Credentials.fromMnemonic(opts.network || 'livenet', words, opts.passphrase, opts.account || 0);
+    this.credentials = Credentials.fromMnemonic(opts.network || 'livenet', words, opts.passphrase, opts.account || 0, opts.derivationStrategy || Constants.DERIVATION_STRATEGIES.BIP44);
   } catch (e) {
     log.info('Mnemonic error:', e);
     return cb(Errors.INVALID_BACKUP);
@@ -537,6 +545,7 @@ API.prototype.importFromExtendedPrivateKey = function(xPrivKey, cb) {
  * @param {String} entropySourceHex - A HEX string containing pseudo-random data, that can be deterministically derived from the xPrivKey, and should not be derived from xPubKey.
  * @param {Object} opts
  * @param {Number} opts.account - default 0
+ * @param {String} opts.derivationStrategy - default 'BIP44'
  */
 API.prototype.importFromExtendedPublicKey = function(xPubKey, source, entropySourceHex, opts, cb) {
   $.checkArgument(arguments.length == 5, "DEPRECATED: should receive 5 arguments");
@@ -546,7 +555,7 @@ API.prototype.importFromExtendedPublicKey = function(xPubKey, source, entropySou
   opts = opts || {};
   log.debug('Importing from Extended Private Key');
   try {
-    this.credentials = Credentials.fromExtendedPublicKey(xPubKey, source, entropySourceHex, opts.account || 0);
+    this.credentials = Credentials.fromExtendedPublicKey(xPubKey, source, entropySourceHex, opts.account || 0, opts.derivationStrategy || Constants.DERIVATION_STRATEGIES.BIP44);
   } catch (e) {
     log.info('xPriv error:', e);
     return cb(Errors.INVALID_BACKUP);
@@ -797,6 +806,143 @@ API.prototype._doDeleteRequest = function(url, cb) {
   return this._doRequest('delete', url, {}, cb);
 };
 
+API._buildSecret = function(walletId, walletPrivKey, network) {
+  if (_.isString(walletPrivKey)) {
+    walletPrivKey = Bitcore.PrivateKey.fromString(walletPrivKey);
+  }
+  var widHex = new Buffer(walletId.replace(/-/g, ''), 'hex');
+  var widBase58 = new Bitcore.encoding.Base58(widHex).toString();
+  return _.padRight(widBase58, 22, '0') + walletPrivKey.toWIF() + (network == 'testnet' ? 'T' : 'L');
+};
+
+API._parseSecret = function(secret) {
+  $.checkArgument(secret);
+
+  function split(str, indexes) {
+    var parts = [];
+    indexes.push(str.length);
+    var i = 0;
+    while (i < indexes.length) {
+      parts.push(str.substring(i == 0 ? 0 : indexes[i - 1], indexes[i]));
+      i++;
+    };
+    return parts;
+  };
+
+  try {
+    var secretSplit = split(secret, [22, 74]);
+    var widBase58 = secretSplit[0].replace(/0/g, '');
+    var widHex = Bitcore.encoding.Base58.decode(widBase58).toString('hex');
+    var walletId = split(widHex, [8, 12, 16, 20]).join('-');
+
+    var walletPrivKey = Bitcore.PrivateKey.fromString(secretSplit[1]);
+    var networkChar = secretSplit[2];
+
+    return {
+      walletId: walletId,
+      walletPrivKey: walletPrivKey,
+      network: networkChar == 'T' ? 'testnet' : 'livenet',
+    };
+  } catch (ex) {
+    throw new Error('Invalid secret');
+  }
+};
+
+API._buildTx = function(txp) {
+  var t = new Bitcore.Transaction();
+
+  $.checkState(_.contains(_.values(Constants.SCRIPT_TYPES), txp.addressType));
+
+  switch (txp.addressType) {
+    case Constants.SCRIPT_TYPES.P2SH:
+      _.each(txp.inputs, function(i) {
+        t.from(i, i.publicKeys, txp.requiredSignatures);
+      });
+      break;
+    case Constants.SCRIPT_TYPES.P2PKH:
+      t.from(txp.inputs);
+      break;
+  }
+
+  if (txp.toAddress && txp.amount && !txp.outputs) {
+    t.to(txp.toAddress, txp.amount);
+  } else if (txp.outputs) {
+    _.each(txp.outputs, function(o) {
+      $.checkState(!o.script != !o.toAddress, 'Output should have either toAddress or script specified');
+      if (o.script) {
+        t.addOutput(new Bitcore.Transaction.Output({
+          script: o.script,
+          satoshis: o.amount
+        }));
+      } else {
+        t.to(o.toAddress, o.amount);
+      }
+    });
+  }
+
+  if (_.startsWith(txp.version, '1.')) {
+    Bitcore.Transaction.FEE_SECURITY_MARGIN = 1;
+    t.feePerKb(txp.feePerKb);
+  } else {
+    t.fee(txp.fee);
+  }
+
+  t.change(txp.changeAddress.address);
+
+  // Shuffle outputs for improved privacy
+  if (t.outputs.length > 1) {
+    $.checkState(t.outputs.length == txp.outputOrder.length);
+    t.sortOutputs(function(outputs) {
+      return _.map(txp.outputOrder, function(i) {
+        return outputs[i];
+      });
+    });
+  }
+
+  // Validate inputs vs outputs independently of Bitcore
+  var totalInputs = _.reduce(txp.inputs, function(memo, i) {
+    return +i.satoshis + memo;
+  }, 0);
+  var totalOutputs = _.reduce(t.outputs, function(memo, o) {
+    return +o.satoshis + memo;
+  }, 0);
+
+  $.checkState(totalInputs - totalOutputs <= Defaults.MAX_TX_FEE);
+
+  return t;
+};
+
+API.prototype._signTxp = function(txp) {
+  var self = this;
+
+  $.checkArgument(txp);
+
+  //Derive proper key to sign, for each input
+  var privs = [];
+  var derived = {};
+
+  var xpriv = self.credentials.getDerivedXPrivKey();
+
+  _.each(txp.inputs, function(i) {
+    if (!derived[i.path]) {
+      derived[i.path] = xpriv.derive(i.path).privateKey;
+      privs.push(derived[i.path]);
+    }
+  });
+
+  var t = API._buildTx(txp);
+
+  var signatures = _.map(privs, function(priv, i) {
+    return t.getSignatures(priv);
+  });
+
+  signatures = _.map(_.sortBy(_.flatten(signatures), 'inputIndex'), function(s) {
+    return s.signature.toDER().toString('hex');
+  });
+
+  return signatures;
+};
+
 /**
  * Join
  * @private
@@ -817,7 +963,7 @@ API.prototype._doJoinWallet = function(walletId, walletPrivKey, xPubKey, request
   // Adds encrypted walletPrivateKey to CustomData
   opts.customData = opts.customData || {};
   opts.customData.walletPrivKey = walletPrivKey.toString();;
-  var encCustomData = WalletUtils.encryptMessage(JSON.stringify(opts.customData),
+  var encCustomData = Utils.encryptMessage(JSON.stringify(opts.customData),
     this.credentials.personalEncryptingKey);
 
   var args = {
@@ -832,8 +978,8 @@ API.prototype._doJoinWallet = function(walletId, walletPrivKey, xPubKey, request
   if (_.isBoolean(opts.supportBIP44AndP2PKH))
     args.supportBIP44AndP2PKH = opts.supportBIP44AndP2PKH;
 
-  var hash = WalletUtils.getCopayerHash(args.name, args.xPubKey, args.requestPubKey);
-  args.copayerSignature = WalletUtils.signMessage(hash, walletPrivKey);
+  var hash = Utils.getCopayerHash(args.name, args.xPubKey, args.requestPubKey);
+  args.copayerSignature = Utils.signMessage(hash, walletPrivKey);
 
   var url = '/v2/wallets/' + walletId + '/copayers';
   this._doPostRequest(url, args, function(err, body) {
@@ -1024,8 +1170,9 @@ API.prototype.createWallet = function(walletName, copayerName, m, n, opts, cb) {
     if (err) return cb(err);
 
     var walletId = body.walletId;
-    var secret = WalletUtils.toSecret(walletId, walletPrivKey, network);
     self.credentials.addWalletInfo(walletId, walletName, m, n, walletPrivKey.toString(), copayerName);
+    var c = self.credentials;
+    var secret = API._buildSecret(c.walletId, c.walletPrivKey, c.network);
 
     self._doJoinWallet(walletId, walletPrivKey, self.credentials.xPubKey, self.credentials.requestPubKey, copayerName, {},
       function(err, wallet) {
@@ -1057,7 +1204,7 @@ API.prototype.joinWallet = function(secret, copayerName, opts, cb) {
   opts = opts || {};
 
   try {
-    var secretData = WalletUtils.fromSecret(secret);
+    var secretData = API._parseSecret(secret);
   } catch (ex) {
     return cb(ex);
   }
@@ -1102,7 +1249,7 @@ API.prototype.recreateWallet = function(cb) {
     };
     var walletPrivKey = Bitcore.PrivateKey.fromString(self.credentials.walletPrivKey);
     var walletId = self.credentials.walletId;
-    var supportBIP44AndP2PKH = self.credentials.derivationStrategy == WalletUtils.DERIVATION_STRATEGIES.BIP44;
+    var supportBIP44AndP2PKH = self.credentials.derivationStrategy != Constants.DERIVATION_STRATEGIES.BIP45;
 
     var args = {
       name: self.credentials.walletName || 'recovered wallet',
@@ -1158,7 +1305,7 @@ API.prototype._processCustomData = function(result) {
 
   var customData;
   try {
-    customData = JSON.parse(WalletUtils.decryptMessage(me.customData, this.credentials.personalEncryptingKey));
+    customData = JSON.parse(Utils.decryptMessage(me.customData, this.credentials.personalEncryptingKey));
   } catch (e) {
     log.warn('Could not decrypt customData:', me.customData);
   }
@@ -1223,8 +1370,8 @@ API.prototype.getStatus = function(opts, cb) {
   self._doGetRequest('/v2/wallets/?includeExtendedInfo=' + (opts.includeExtendedInfo ? '1' : '0'), function(err, result) {
     if (err) return cb(err);
     if (result.wallet.status == 'pending') {
-      var cred = self.credentials;
-      result.wallet.secret = WalletUtils.toSecret(cred.walletId, cred.walletPrivKey, cred.network);
+      var c = self.credentials;
+      result.wallet.secret = API._buildSecret(c.walletId, c.walletPrivKey, c.network);
     }
     self._processTxps(result.pendingTxps);
     self._processCustomData(result);
@@ -1276,14 +1423,14 @@ API.prototype._computeProposalSignature = function(args) {
         return _.pick(output, ['toAddress', 'amount', 'message']);
       }),
       message: args.message || null,
-      payProUrl: args.payProUrl
+      payProUrl: args.payProUrl || null,
     };
-    hash = WalletUtils.getProposalHash(proposalHeader);
+    hash = Utils.getProposalHash(proposalHeader);
   } else {
     $.shouldBeNumber(args.amount);
-    hash = WalletUtils.getProposalHash(args.toAddress, args.amount, args.message || null, args.payProUrl);
+    hash = Utils.getProposalHash(args.toAddress, args.amount, args.message || null, args.payProUrl || null);
   }
-  return WalletUtils.signMessage(hash, this.credentials.requestPrivKey);
+  return Utils.signMessage(hash, this.credentials.requestPrivKey);
 }
 
 /**
@@ -1355,7 +1502,7 @@ API.prototype.sendTxProposal = function(opts, cb) {
     amount: opts.amount,
     message: API._encryptMessage(opts.message, this.credentials.sharedEncryptingKey) || null,
     feePerKb: opts.feePerKb,
-    payProUrl: opts.payProUrl,
+    payProUrl: opts.payProUrl || null,
     excludeUnconfirmedUtxos: !!opts.excludeUnconfirmedUtxos,
     type: opts.type,
     outputs: _.cloneDeep(opts.outputs),
@@ -1484,7 +1631,7 @@ API.prototype.getTxProposals = function(opts, cb) {
         if (opts.forAirGapped) {
           result = {
             txps: JSON.parse(JSON.stringify(txps)),
-            encryptedPkr: WalletUtils.encryptMessage(JSON.stringify(self.credentials.publicKeyRing), self.credentials.personalEncryptingKey),
+            encryptedPkr: Utils.encryptMessage(JSON.stringify(self.credentials.publicKeyRing), self.credentials.personalEncryptingKey),
             m: self.credentials.m,
             n: self.credentials.n,
           };
@@ -1540,7 +1687,7 @@ API.prototype.signTxProposal = function(txp, cb) {
     if (!isLegit)
       return cb(Errors.SERVER_COMPROMISED);
 
-    var signatures = txp.signatures || WalletUtils.signTxp(txp, self.credentials.xPrivKey);
+    var signatures = txp.signatures || self._signTxp(txp);
 
     var url = '/v1/txproposals/' + txp.id + '/signatures/';
     var args = {
@@ -1577,7 +1724,7 @@ API.prototype.signTxProposalFromAirGapped = function(txp, encryptedPkr, m, n) {
 
   var publicKeyRing;
   try {
-    publicKeyRing = JSON.parse(WalletUtils.decryptMessage(encryptedPkr, self.credentials.personalEncryptingKey));
+    publicKeyRing = JSON.parse(Utils.decryptMessage(encryptedPkr, self.credentials.personalEncryptingKey));
   } catch (ex) {
     throw new Error('Could not decrypt public key ring');
   }
@@ -1588,14 +1735,13 @@ API.prototype.signTxProposalFromAirGapped = function(txp, encryptedPkr, m, n) {
 
   self.credentials.m = m;
   self.credentials.n = n;
-  self.derivationStrategy = txp.derivationStrategy;
-  self.addressType = txp.addressType;
+  self.credentials.addressType = txp.addressType;
   self.credentials.addPublicKeyRing(publicKeyRing);
 
   if (!Verifier.checkTxProposalBody(self.credentials, txp))
     throw new Error('Fake transaction proposal');
 
-  return WalletUtils.signTxp(txp, self.credentials.xPrivKey);
+  return self._signTxp(txp);
 };
 
 
@@ -1674,7 +1820,7 @@ API.prototype.broadcastTxProposal = function(txp, cb) {
 
     if (paypro) {
 
-      var t = WalletUtils.buildTx(txp);
+      var t = API._buildTx(txp);
       self.createAddress(function(err, addr) {
         if (err) return cb(err);
 
@@ -1871,7 +2017,7 @@ API.prototype.addAccess = function(opts, cb) {
 
   var xPriv = new Bitcore.HDPrivateKey(this.credentials.xPrivKey)
     .derive(this.credentials.getBaseAddressDerivationPath());
-  var sig = WalletUtils.signRequestPubKey(requestPubKey, xPriv);
+  var sig = Utils.signRequestPubKey(requestPubKey, xPriv);
   var copayerId = this.credentials.copayerId;
 
   var opts = {
@@ -1892,16 +2038,206 @@ API.prototype.addAccess = function(opts, cb) {
 module.exports = API;
 
 }).call(this,require('_process'),require("buffer").Buffer)
-},{"../package.json":280,"./credentials":4,"./errors/clienterror":5,"./errors/errordefinitions":6,"./log":8,"./paypro":9,"./verifier":10,"_process":497,"async":11,"bip38":12,"bitcore-wallet-utils":172,"browser-request":178,"buffer":297,"events":487,"lodash":179,"preconditions":180,"querystring":501,"request":185,"sjcl":279,"url":515,"util":517}],4:[function(require,module,exports){
+},{"../package.json":282,"./common":6,"./credentials":8,"./errors/clienterror":9,"./errors/errordefinitions":10,"./log":12,"./paypro":13,"./verifier":14,"_process":499,"async":15,"bip38":16,"bitcore-lib":65,"browser-request":176,"buffer":299,"events":489,"json-stable-stringify":177,"lodash":181,"preconditions":182,"querystring":503,"request":187,"sjcl":281,"url":517,"util":519}],4:[function(require,module,exports){
+'use strict';
+
+var Constants = {};
+
+Constants.SCRIPT_TYPES = {
+  P2SH: 'P2SH',
+  P2PKH: 'P2PKH',
+};
+Constants.DERIVATION_STRATEGIES = {
+  BIP44: 'BIP44',
+  BIP45: 'BIP45',
+  BIP48: 'BIP48',
+};
+
+Constants.PATHS = {
+  REQUEST_KEY: "m/1'/0",
+  TXPROPOSAL_KEY: "m/1'/1",
+  REQUEST_KEY_AUTH: "m/2", // relative to BASE
+};
+
+Constants.BIP45_SHARED_INDEX = 0x80000000 - 1;
+
+module.exports = Constants;
+
+},{}],5:[function(require,module,exports){
+'use strict';
+
+var Defaults = {};
+
+Defaults.DEFAULT_FEE_PER_KB = 10000;
+Defaults.MIN_FEE_PER_KB = 0;
+Defaults.MAX_FEE_PER_KB = 1000000;
+Defaults.MAX_TX_FEE = 1 * 1e8;
+
+module.exports = Defaults;
+
+},{}],6:[function(require,module,exports){
+var Common = {};
+
+Common.Constants = require('./constants');
+Common.Defaults = require('./defaults');
+Common.Utils = require('./utils');
+
+module.exports = Common;
+
+},{"./constants":4,"./defaults":5,"./utils":7}],7:[function(require,module,exports){
+(function (Buffer){
+'use strict';
+
+var _ = require('lodash');
+var $ = require('preconditions').singleton();
+var sjcl = require('sjcl');
+var Stringify = require('json-stable-stringify');
+
+var Bitcore = require('bitcore-lib');
+var Address = Bitcore.Address;
+var PrivateKey = Bitcore.PrivateKey;
+var PublicKey = Bitcore.PublicKey;
+var crypto = Bitcore.crypto;
+var encoding = Bitcore.encoding;
+
+var Constants = require('./constants');
+
+function Utils() {};
+
+Utils.encryptMessage = function(message, encryptingKey) {
+  var key = sjcl.codec.base64.toBits(encryptingKey);
+  return sjcl.encrypt(key, message, {
+    ks: 128,
+    iter: 1,
+  });
+};
+
+Utils.decryptMessage = function(cyphertextJson, encryptingKey) {
+  var key = sjcl.codec.base64.toBits(encryptingKey);
+  return sjcl.decrypt(key, cyphertextJson);
+};
+
+/* TODO: It would be nice to be compatible with bitcoind signmessage. How
+ * the hash is calculated there? */
+Utils.hashMessage = function(text) {
+  $.checkArgument(text);
+  var buf = new Buffer(text);
+  var ret = crypto.Hash.sha256sha256(buf);
+  ret = new Bitcore.encoding.BufferReader(ret).readReverse();
+  return ret;
+};
+
+
+Utils.signMessage = function(text, privKey) {
+  $.checkArgument(text);
+  var priv = new PrivateKey(privKey);
+  var hash = Utils.hashMessage(text);
+  return crypto.ECDSA.sign(hash, priv, 'little').toString();
+};
+
+
+Utils.verifyMessage = function(text, signature, pubKey) {
+  $.checkArgument(text);
+  $.checkArgument(pubKey);
+
+  if (!signature)
+    return false;
+
+  var pub = new PublicKey(pubKey);
+  var hash = Utils.hashMessage(text);
+
+  try {
+    var sig = new crypto.Signature.fromString(signature);
+    return crypto.ECDSA.verify(hash, sig, pub, 'little');
+  } catch (e) {
+    return false;
+  }
+};
+
+Utils.privateKeyToAESKey = function(privKey) {
+  $.checkArgument(privKey && _.isString(privKey));
+  $.checkArgument(Bitcore.PrivateKey.isValid(privKey), 'The private key received is invalid');
+  var pk = Bitcore.PrivateKey.fromString(privKey);
+  return Bitcore.crypto.Hash.sha256(pk.toBuffer()).slice(0, 16).toString('base64');
+};
+
+Utils.getCopayerHash = function(name, xPubKey, requestPubKey) {
+  return [name, xPubKey, requestPubKey].join('|');
+};
+
+Utils.getProposalHash = function(proposalHeader) {
+  function getOldHash(toAddress, amount, message, payProUrl) {
+    return [toAddress, amount, (message || ''), (payProUrl || '')].join('|');
+  };
+
+  // For backwards compatibility
+  if (arguments.length > 1) {
+    return getOldHash.apply(this, arguments);
+  }
+
+  return Stringify(proposalHeader);
+};
+
+Utils.deriveAddress = function(scriptType, publicKeyRing, path, m, network) {
+  $.checkArgument(_.contains(_.values(Constants.SCRIPT_TYPES), scriptType));
+
+  var publicKeys = _.map(publicKeyRing, function(item) {
+    var xpub = new Bitcore.HDPublicKey(item.xPubKey);
+    return xpub.derive(path).publicKey;
+  });
+
+  var bitcoreAddress;
+  switch (scriptType) {
+    case Constants.SCRIPT_TYPES.P2SH:
+      bitcoreAddress = Address.createMultisig(publicKeys, m, network);
+      break;
+    case Constants.SCRIPT_TYPES.P2PKH:
+      $.checkState(_.isArray(publicKeys) && publicKeys.length == 1);
+      bitcoreAddress = Address.fromPublicKey(publicKeys[0], network);
+      break;
+  }
+
+  return {
+    address: bitcoreAddress.toString(),
+    path: path,
+    publicKeys: _.invoke(publicKeys, 'toString'),
+  };
+};
+
+Utils.xPubToCopayerId = function(xpub) {
+  var hash = sjcl.hash.sha256.hash(xpub);
+  return sjcl.codec.hex.fromBits(hash);
+};
+
+Utils.signRequestPubKey = function(requestPubKey, xPrivKey) {
+  var priv = new Bitcore.HDPrivateKey(xPrivKey).derive(Constants.PATHS.REQUEST_KEY_AUTH).privateKey;
+  return Utils.signMessage(requestPubKey, priv);
+};
+
+Utils.verifyRequestPubKey = function(requestPubKey, signature, xPubKey) {
+  var pub = (new Bitcore.HDPublicKey(xPubKey)).derive(Constants.PATHS.REQUEST_KEY_AUTH).publicKey;
+  return Utils.verifyMessage(requestPubKey, signature, pub.toString());
+};
+
+
+
+module.exports = Utils;
+
+}).call(this,require("buffer").Buffer)
+},{"./constants":4,"bitcore-lib":65,"buffer":299,"json-stable-stringify":177,"lodash":181,"preconditions":182,"sjcl":281}],8:[function(require,module,exports){
 (function (Buffer){
 'use strict';
 
 var $ = require('preconditions').singleton();
 var _ = require('lodash');
-var WalletUtils = require('bitcore-wallet-utils');
-var Bitcore = WalletUtils.Bitcore;
+
+var Bitcore = require('bitcore-lib');
 var Mnemonic = require('bitcore-mnemonic');
 var sjcl = require('sjcl');
+
+var Common = require('./common');
+var Constants = Common.Constants;
+var Utils = Common.Utils;
 
 var FIELDS = [
   'network',
@@ -1932,7 +2268,7 @@ var FIELDS = [
 
 function Credentials() {
   this.version = '1.0.0';
-  this.derivationStrategy = WalletUtils.DERIVATION_STRATEGIES.BIP44;
+  this.derivationStrategy = Constants.DERIVATION_STRATEGIES.BIP44;
   this.account = 0;
 };
 
@@ -1988,15 +2324,17 @@ Credentials.fromExtendedPrivateKey = function(xPrivKey) {
 };
 
 // note that mnemonic / passphrase is NOT stored
-Credentials.fromMnemonic = function(network, words, passphrase, account) {
+Credentials.fromMnemonic = function(network, words, passphrase, account, derivationStrategy) {
   _checkNetwork(network);
   $.shouldBeNumber(account);
+  $.checkArgument(_.contains(_.values(Constants.DERIVATION_STRATEGIES), derivationStrategy));
 
   var m = new Mnemonic(words);
   var x = new Credentials();
   x.xPrivKey = m.toHDPrivateKey(passphrase, network).toString();
   x.mnemonicHasPassphrase = !!passphrase;
   x.account = account;
+  x.derivationStrategy = derivationStrategy;
   x._expand();
   return x;
 };
@@ -2012,9 +2350,10 @@ Credentials.fromMnemonic = function(network, words, passphrase, account) {
  * entropySource should be a HEX string containing pseudo-random data, that can
  * be deterministically derived from the xPrivKey, and should not be derived from xPubKey
  */
-Credentials.fromExtendedPublicKey = function(xPubKey, source, entropySourceHex, account) {
+Credentials.fromExtendedPublicKey = function(xPubKey, source, entropySourceHex, account, derivationStrategy) {
   $.checkArgument(entropySourceHex);
   $.shouldBeNumber(account);
+  $.checkArgument(_.contains(_.values(Constants.DERIVATION_STRATEGIES), derivationStrategy));
 
   var entropyBuffer = new Buffer(entropySourceHex, 'hex');
   //require at least 112 bits of entropy
@@ -2024,9 +2363,21 @@ Credentials.fromExtendedPublicKey = function(xPubKey, source, entropySourceHex, 
   x.xPubKey = xPubKey;
   x.entropySource = Bitcore.crypto.Hash.sha256sha256(entropyBuffer).toString('hex');
   x.account = account;
+  x.derivationStrategy = derivationStrategy;
   x.externalSource = source;
   x._expand();
   return x;
+};
+
+// Get network from extended private key or extended public key
+Credentials._getNetworkFromExtendedKey = function(xKey) {
+  $.checkArgument(xKey && _.isString(xKey));
+  return xKey.charAt(0) == 't' ? 'testnet' : 'livenet';
+};
+
+Credentials._xPubToCopayerId = function(xpub) {
+  var hash = sjcl.hash.sha256.hash(xpub);
+  return sjcl.codec.hex.fromBits(hash);
 };
 
 Credentials.prototype._hashFromEntropy = function(prefix, length) {
@@ -2040,7 +2391,7 @@ Credentials.prototype._hashFromEntropy = function(prefix, length) {
 Credentials.prototype._expand = function() {
   $.checkState(this.xPrivKey || (this.xPubKey && this.entropySource));
 
-  var network = WalletUtils.getNetworkFromExtendedKey(this.xPrivKey || this.xPubKey);
+  var network = Credentials._getNetworkFromExtendedKey(this.xPrivKey || this.xPubKey);
   if (this.network) {
     $.checkState(this.network == network);
   } else {
@@ -2054,7 +2405,7 @@ Credentials.prototype._expand = function() {
     var addressDerivation = xPrivKey.derive(this.getBaseAddressDerivationPath());
     this.xPubKey = (new Bitcore.HDPublicKey(addressDerivation)).toString();
 
-    var requestDerivation = xPrivKey.derive(WalletUtils.PATHS.REQUEST_KEY);
+    var requestDerivation = xPrivKey.derive(Constants.PATHS.REQUEST_KEY);
     this.requestPrivKey = requestDerivation.privateKey.toString();
 
     var pubKey = requestDerivation.publicKey;
@@ -2071,7 +2422,7 @@ Credentials.prototype._expand = function() {
   this.personalEncryptingKey = this._hashFromEntropy('personalKey', 16).toString('base64');
 
 
-  this.copayerId = WalletUtils.xPubToCopayerId(this.xPubKey);
+  this.copayerId = Credentials._xPubToCopayerId(this.xPubKey);
   this.publicKeyRing = [{
     xPubKey: this.xPubKey,
     requestPubKey: this.requestPubKey,
@@ -2085,8 +2436,8 @@ Credentials.fromObj = function(obj) {
     x[k] = obj[k];
   });
 
-  x.derivationStrategy = x.derivationStrategy || WalletUtils.DERIVATION_STRATEGIES.BIP45;
-  x.addressType = x.addressType || WalletUtils.SCRIPT_TYPES.P2SH;
+  x.derivationStrategy = x.derivationStrategy || Constants.DERIVATION_STRATEGIES.BIP45;
+  x.addressType = x.addressType || Constants.SCRIPT_TYPES.P2SH;
   x.account = x.account || 0;
 
   $.checkState(x.xPrivKey || x.xPubKey || x.xPrivKeyEncrypted, "invalid input");
@@ -2107,12 +2458,30 @@ Credentials.prototype.toObj = function() {
 };
 
 Credentials.prototype.getBaseAddressDerivationPath = function() {
-  return WalletUtils.getBaseAddressDerivationPath(this.derivationStrategy, this.network, this.account);
+  var purpose;
+  switch (this.derivationStrategy) {
+    case Constants.DERIVATION_STRATEGIES.BIP45:
+      return "m/45'";
+    case Constants.DERIVATION_STRATEGIES.BIP44:
+      purpose = '44';
+      break;
+    case Constants.DERIVATION_STRATEGIES.BIP48:
+      purpose = '48';
+      break;
+  }
+
+  var coin = (this.network == 'livenet' ? "0" : "1");
+  return "m/" + purpose + "'/" + coin + "'/" + this.account + "'";
+};
+
+Credentials.prototype.getDerivedXPrivKey = function() {
+  var path = this.getBaseAddressDerivationPath();
+  return new Bitcore.HDPrivateKey(this.xPrivKey, this.network).derive(path);
 };
 
 Credentials.prototype.addWalletPrivateKey = function(walletPrivKey) {
   this.walletPrivKey = walletPrivKey;
-  this.sharedEncryptingKey = WalletUtils.privateKeyToAESKey(walletPrivKey);
+  this.sharedEncryptingKey = Utils.privateKeyToAESKey(walletPrivKey);
 };
 
 Credentials.prototype.addWalletInfo = function(walletId, walletName, m, n, walletPrivKey, copayerName) {
@@ -2127,7 +2496,12 @@ Credentials.prototype.addWalletInfo = function(walletId, walletName, m, n, walle
   if (copayerName)
     this.copayerName = copayerName;
 
-  this.addressType = (n == 1) ? WalletUtils.SCRIPT_TYPES.P2PKH : WalletUtils.SCRIPT_TYPES.P2SH;
+  this.addressType = (n == 1) ? Constants.SCRIPT_TYPES.P2PKH : Constants.SCRIPT_TYPES.P2SH;
+
+  // Use m/48' for multisig hardware wallets
+  if (!this.xPrivKey && this.externalSource && n > 1) {
+    this.derivationStrategy = Constants.DERIVATION_STRATEGIES.BIP48;
+  }
 
   if (n == 1) {
     this.addPublicKeyRing([{
@@ -2251,7 +2625,7 @@ Credentials.fromOldCopayWallet = function(w) {
   };
 
   var credentials = new Credentials();
-  credentials.derivationStrategy = WalletUtils.DERIVATION_STRATEGIES.BIP45;
+  credentials.derivationStrategy = Constants.DERIVATION_STRATEGIES.BIP45;
   credentials.xPrivKey = w.privateKey.extendedPrivateKeyString;
   credentials._expand();
 
@@ -2263,12 +2637,12 @@ Credentials.fromOldCopayWallet = function(w) {
     var requestDerivation;
 
     if (isMe) {
-      var path = WalletUtils.PATHS.REQUEST_KEY;
+      var path = Constants.PATHS.REQUEST_KEY;
       requestDerivation = (new Bitcore.HDPrivateKey(credentials.xPrivKey))
         .derive(path).hdPublicKey;
     } else {
       // this 
-      var path = WalletUtils.PATHS.REQUEST_KEY_AUTH;
+      var path = Constants.PATHS.REQUEST_KEY_AUTH;
       requestDerivation = (new Bitcore.HDPublicKey(xPubStr)).derive(path);
     }
 
@@ -2293,7 +2667,7 @@ Credentials.fromOldCopayWallet = function(w) {
 module.exports = Credentials;
 
 }).call(this,require("buffer").Buffer)
-},{"bitcore-mnemonic":138,"bitcore-wallet-utils":172,"buffer":297,"lodash":179,"preconditions":180,"sjcl":279}],5:[function(require,module,exports){
+},{"./common":6,"bitcore-lib":65,"bitcore-mnemonic":142,"buffer":299,"lodash":181,"preconditions":182,"sjcl":281}],9:[function(require,module,exports){
 'use strict';
 
 function ClientError(code, message) {
@@ -2307,7 +2681,7 @@ ClientError.prototype.toString = function() {
 
 module.exports = ClientError;
 
-},{}],6:[function(require,module,exports){
+},{}],10:[function(require,module,exports){
 'use strict';
 
 var _ = require('lodash');
@@ -2334,7 +2708,7 @@ errorObjects.codes = _.mapValues(errors, function(v, k) {
 
 module.exports = errorObjects;
 
-},{"./clienterror":5,"lodash":179}],7:[function(require,module,exports){
+},{"./clienterror":9,"lodash":181}],11:[function(require,module,exports){
 /**
  * The official client library for bitcore-wallet-service.
  * @module Client
@@ -2351,13 +2725,13 @@ var client = module.exports = require('./api');
  * @alias module:Client.Verifier
  */
 client.Verifier = require('./verifier');
-client.Utils = require('bitcore-wallet-utils');
+client.Utils = require('./common/utils');
 client.sjcl = require('sjcl');
 
 // Expose bitcore
-client.Bitcore = require('bitcore-wallet-utils').Bitcore;
+client.Bitcore = require('bitcore-lib');
 
-},{"./api":3,"./verifier":10,"bitcore-wallet-utils":172,"sjcl":279}],8:[function(require,module,exports){
+},{"./api":3,"./common/utils":7,"./verifier":14,"bitcore-lib":65,"sjcl":281}],12:[function(require,module,exports){
 var _ = require('lodash');
 /**
  * @desc
@@ -2485,12 +2859,11 @@ var error = new Error();
 logger.setLevel('info');
 module.exports = logger;
 
-},{"lodash":179}],9:[function(require,module,exports){
+},{"lodash":181}],13:[function(require,module,exports){
 (function (process,Buffer){
 var $ = require('preconditions').singleton();
 
-var WalletUtils = require('bitcore-wallet-utils');
-var Bitcore = WalletUtils.Bitcore;
+var Bitcore = require('bitcore-lib');
 var BitcorePayPro = require('bitcore-payment-protocol');
 var PayPro = {};
 
@@ -2625,7 +2998,7 @@ PayPro.get = function(opts, cb) {
     }
 
     var ok = verified.verified;
-    var caName; 
+    var caName;
 
     if (verified.isChain) {
       ok = ok && verified.chainVerified;
@@ -2722,10 +3095,10 @@ PayPro.send = function(opts, cb) {
     var memo;
     if (rawData) {
       try {
-      var data = BitcorePayPro.PaymentACK.decode(rawData);
-      var pp = new BitcorePayPro();
-      var ack = pp.makePaymentACK(data);
-      memo = ack.get('memo');
+        var data = BitcorePayPro.PaymentACK.decode(rawData);
+        var pp = new BitcorePayPro();
+        var ack = pp.makePaymentACK(data);
+        memo = ack.get('memo');
       } catch (e) {};
     }
     return cb(null, rawData, memo);
@@ -2735,14 +3108,16 @@ PayPro.send = function(opts, cb) {
 module.exports = PayPro;
 
 }).call(this,require('_process'),require("buffer").Buffer)
-},{"_process":497,"bitcore-payment-protocol":149,"bitcore-wallet-utils":172,"buffer":297,"http":488,"https":492,"preconditions":180}],10:[function(require,module,exports){
+},{"_process":499,"bitcore-lib":65,"bitcore-payment-protocol":153,"buffer":299,"http":490,"https":494,"preconditions":182}],14:[function(require,module,exports){
 /** @namespace Verifier */
 
 var $ = require('preconditions').singleton();
 var _ = require('lodash');
 
-var WalletUtils = require('bitcore-wallet-utils');
-var Bitcore = WalletUtils.Bitcore;
+var Bitcore = require('bitcore-lib');
+
+var Common = require('./common');
+var Utils = Common.Utils;
 
 var log = require('./log');
 
@@ -2763,7 +3138,7 @@ function Verifier(opts) {};
 Verifier.checkAddress = function(credentials, address) {
   $.checkState(credentials.isComplete());
 
-  var local = WalletUtils.deriveAddress(address.type || credentials.addressType, credentials.publicKeyRing, address.path, credentials.m, credentials.network);
+  var local = Utils.deriveAddress(address.type || credentials.addressType, credentials.publicKeyRing, address.path, credentials.m, credentials.network);
   return (local.address == address.address &&
     _.difference(local.publicKeys, address.publicKeys).length === 0);
 };
@@ -2800,8 +3175,8 @@ Verifier.checkCopayers = function(credentials, copayers) {
       log.error('Missing copayer fields in server response');
       error = true;
     } else {
-      var hash = WalletUtils.getCopayerHash(copayer.name, copayer.xPubKey, copayer.requestPubKey);
-      if (!WalletUtils.verifyMessage(hash, copayer.signature, walletPubKey)) {
+      var hash = Utils.getCopayerHash(copayer.name, copayer.xPubKey, copayer.requestPubKey);
+      if (!Utils.verifyMessage(hash, copayer.signature, walletPubKey)) {
         log.error('Invalid signatures in server response');
         error = true;
       }
@@ -2822,7 +3197,7 @@ Verifier.checkTxProposalBody = function(credentials, txp) {
   $.checkState(credentials.isComplete());
 
   var creatorKeys = _.find(credentials.publicKeyRing, function(item) {
-    if (WalletUtils.xPubToCopayerId(item.xPubKey) === txp.creatorId) return true;
+    if (Utils.xPubToCopayerId(item.xPubKey) === txp.creatorId) return true;
   });
 
   if (!creatorKeys) return false;
@@ -2832,7 +3207,7 @@ Verifier.checkTxProposalBody = function(credentials, txp) {
   if (txp.proposalSignaturePubKey) {
 
     // Verify it...
-    if (!WalletUtils.verifyRequestPubKey(txp.proposalSignaturePubKey, txp.proposalSignaturePubKeySig, creatorKeys.xPubKey))
+    if (!Utils.verifyRequestPubKey(txp.proposalSignaturePubKey, txp.proposalSignaturePubKeySig, creatorKeys.xPubKey))
       return false;
 
     creatorSigningPubKey = txp.proposalSignaturePubKey;
@@ -2853,15 +3228,15 @@ Verifier.checkTxProposalBody = function(credentials, txp) {
     var proposalHeader = {
       outputs: outputs,
       message: txp.encryptedMessage || txp.message || null,
-      payProUrl: txp.payProUrl
+      payProUrl: txp.payProUrl || null,
     };
-    hash = WalletUtils.getProposalHash(proposalHeader);
+    hash = Utils.getProposalHash(proposalHeader);
   } else {
-    hash = WalletUtils.getProposalHash(txp.toAddress, txp.amount, txp.encryptedMessage || txp.message || null, txp.payProUrl);
+    hash = Utils.getProposalHash(txp.toAddress, txp.amount, txp.encryptedMessage || txp.message || null, txp.payProUrl || null);
   }
   log.debug('Regenerating & verifying tx proposal hash -> Hash: ', hash, ' Signature: ', txp.proposalSignature);
 
-  if (!WalletUtils.verifyMessage(hash, txp.proposalSignature, creatorSigningPubKey))
+  if (!Utils.verifyMessage(hash, txp.proposalSignature, creatorSigningPubKey))
     return false;
 
   if (!Verifier.checkAddress(credentials, txp.changeAddress))
@@ -2896,7 +3271,7 @@ Verifier.checkTxProposal = function(credentials, txp, opts) {
 
 module.exports = Verifier;
 
-},{"./log":8,"bitcore-wallet-utils":172,"lodash":179,"preconditions":180}],11:[function(require,module,exports){
+},{"./common":6,"./log":12,"bitcore-lib":65,"lodash":181,"preconditions":182}],15:[function(require,module,exports){
 (function (process){
 /*!
  * async
@@ -4023,7 +4398,7 @@ module.exports = Verifier;
 }());
 
 }).call(this,require('_process'))
-},{"_process":497}],12:[function(require,module,exports){
+},{"_process":499}],16:[function(require,module,exports){
 (function (Buffer){
 var aes = require('browserify-aes')
 var assert = require('assert')
@@ -4268,7 +4643,7 @@ Bip38.prototype.verify = function (encryptedBase58) {
 module.exports = Bip38
 
 }).call(this,require("buffer").Buffer)
-},{"assert":282,"bigi":15,"browserify-aes":19,"buffer":297,"buffer-xor":35,"coinstring":36,"create-hash":38,"ecurve":54,"scryptsy":57}],13:[function(require,module,exports){
+},{"assert":284,"bigi":19,"browserify-aes":23,"buffer":299,"buffer-xor":39,"coinstring":40,"create-hash":42,"ecurve":58,"scryptsy":61}],17:[function(require,module,exports){
 // (public) Constructor
 function BigInteger(a, b, c) {
   if (!(this instanceof BigInteger))
@@ -5781,7 +6156,7 @@ BigInteger.valueOf = nbv
 
 module.exports = BigInteger
 
-},{"../package.json":16}],14:[function(require,module,exports){
+},{"../package.json":20}],18:[function(require,module,exports){
 (function (Buffer){
 // FIXME: Kind of a weird way to throw exceptions, consider removing
 var assert = require('assert')
@@ -5876,14 +6251,14 @@ BigInteger.prototype.toHex = function(size) {
 }
 
 }).call(this,require("buffer").Buffer)
-},{"./bigi":13,"assert":282,"buffer":297}],15:[function(require,module,exports){
+},{"./bigi":17,"assert":284,"buffer":299}],19:[function(require,module,exports){
 var BigInteger = require('./bigi')
 
 //addons
 require('./convert')
 
 module.exports = BigInteger
-},{"./bigi":13,"./convert":14}],16:[function(require,module,exports){
+},{"./bigi":17,"./convert":18}],20:[function(require,module,exports){
 module.exports={
   "name": "bigi",
   "version": "1.4.1",
@@ -5979,7 +6354,7 @@ module.exports={
   "readme": "ERROR: No README data found!"
 }
 
-},{}],17:[function(require,module,exports){
+},{}],21:[function(require,module,exports){
 (function (Buffer){
 // based on the aes implimentation in triple sec
 // https://github.com/keybase/triplesec
@@ -6160,7 +6535,7 @@ AES.prototype._doCryptBlock = function (M, keySchedule, SUB_MIX, SBOX) {
 exports.AES = AES
 
 }).call(this,require("buffer").Buffer)
-},{"buffer":297}],18:[function(require,module,exports){
+},{"buffer":299}],22:[function(require,module,exports){
 (function (Buffer){
 var aes = require('./aes')
 var Transform = require('cipher-base')
@@ -6261,7 +6636,7 @@ function xorTest (a, b) {
 }
 
 }).call(this,require("buffer").Buffer)
-},{"./aes":17,"./ghash":22,"buffer":297,"buffer-xor":35,"cipher-base":31,"inherits":33}],19:[function(require,module,exports){
+},{"./aes":21,"./ghash":26,"buffer":299,"buffer-xor":39,"cipher-base":35,"inherits":37}],23:[function(require,module,exports){
 var ciphers = require('./encrypter')
 exports.createCipher = exports.Cipher = ciphers.createCipher
 exports.createCipheriv = exports.Cipheriv = ciphers.createCipheriv
@@ -6274,7 +6649,7 @@ function getCiphers () {
 }
 exports.listCiphers = exports.getCiphers = getCiphers
 
-},{"./decrypter":20,"./encrypter":21,"./modes":23}],20:[function(require,module,exports){
+},{"./decrypter":24,"./encrypter":25,"./modes":27}],24:[function(require,module,exports){
 (function (Buffer){
 var aes = require('./aes')
 var Transform = require('cipher-base')
@@ -6414,7 +6789,7 @@ exports.createDecipher = createDecipher
 exports.createDecipheriv = createDecipheriv
 
 }).call(this,require("buffer").Buffer)
-},{"./aes":17,"./authCipher":18,"./modes":23,"./modes/cbc":24,"./modes/cfb":25,"./modes/cfb1":26,"./modes/cfb8":27,"./modes/ctr":28,"./modes/ecb":29,"./modes/ofb":30,"./streamCipher":34,"buffer":297,"cipher-base":31,"evp_bytestokey":32,"inherits":33}],21:[function(require,module,exports){
+},{"./aes":21,"./authCipher":22,"./modes":27,"./modes/cbc":28,"./modes/cfb":29,"./modes/cfb1":30,"./modes/cfb8":31,"./modes/ctr":32,"./modes/ecb":33,"./modes/ofb":34,"./streamCipher":38,"buffer":299,"cipher-base":35,"evp_bytestokey":36,"inherits":37}],25:[function(require,module,exports){
 (function (Buffer){
 var aes = require('./aes')
 var Transform = require('cipher-base')
@@ -6539,7 +6914,7 @@ exports.createCipheriv = createCipheriv
 exports.createCipher = createCipher
 
 }).call(this,require("buffer").Buffer)
-},{"./aes":17,"./authCipher":18,"./modes":23,"./modes/cbc":24,"./modes/cfb":25,"./modes/cfb1":26,"./modes/cfb8":27,"./modes/ctr":28,"./modes/ecb":29,"./modes/ofb":30,"./streamCipher":34,"buffer":297,"cipher-base":31,"evp_bytestokey":32,"inherits":33}],22:[function(require,module,exports){
+},{"./aes":21,"./authCipher":22,"./modes":27,"./modes/cbc":28,"./modes/cfb":29,"./modes/cfb1":30,"./modes/cfb8":31,"./modes/ctr":32,"./modes/ecb":33,"./modes/ofb":34,"./streamCipher":38,"buffer":299,"cipher-base":35,"evp_bytestokey":36,"inherits":37}],26:[function(require,module,exports){
 (function (Buffer){
 var zeros = new Buffer(16)
 zeros.fill(0)
@@ -6641,7 +7016,7 @@ function xor (a, b) {
 }
 
 }).call(this,require("buffer").Buffer)
-},{"buffer":297}],23:[function(require,module,exports){
+},{"buffer":299}],27:[function(require,module,exports){
 exports['aes-128-ecb'] = {
   cipher: 'AES',
   key: 128,
@@ -6814,7 +7189,7 @@ exports['aes-256-gcm'] = {
   type: 'auth'
 }
 
-},{}],24:[function(require,module,exports){
+},{}],28:[function(require,module,exports){
 var xor = require('buffer-xor')
 
 exports.encrypt = function (self, block) {
@@ -6833,7 +7208,7 @@ exports.decrypt = function (self, block) {
   return xor(out, pad)
 }
 
-},{"buffer-xor":35}],25:[function(require,module,exports){
+},{"buffer-xor":39}],29:[function(require,module,exports){
 (function (Buffer){
 var xor = require('buffer-xor')
 
@@ -6868,7 +7243,7 @@ function encryptStart (self, data, decrypt) {
 }
 
 }).call(this,require("buffer").Buffer)
-},{"buffer":297,"buffer-xor":35}],26:[function(require,module,exports){
+},{"buffer":299,"buffer-xor":39}],30:[function(require,module,exports){
 (function (Buffer){
 function encryptByte (self, byteParam, decrypt) {
   var pad
@@ -6906,7 +7281,7 @@ function shiftIn (buffer, value) {
 }
 
 }).call(this,require("buffer").Buffer)
-},{"buffer":297}],27:[function(require,module,exports){
+},{"buffer":299}],31:[function(require,module,exports){
 (function (Buffer){
 function encryptByte (self, byteParam, decrypt) {
   var pad = self._cipher.encryptBlock(self._prev)
@@ -6925,7 +7300,7 @@ exports.encrypt = function (self, chunk, decrypt) {
 }
 
 }).call(this,require("buffer").Buffer)
-},{"buffer":297}],28:[function(require,module,exports){
+},{"buffer":299}],32:[function(require,module,exports){
 (function (Buffer){
 var xor = require('buffer-xor')
 
@@ -6960,7 +7335,7 @@ exports.encrypt = function (self, chunk) {
 }
 
 }).call(this,require("buffer").Buffer)
-},{"buffer":297,"buffer-xor":35}],29:[function(require,module,exports){
+},{"buffer":299,"buffer-xor":39}],33:[function(require,module,exports){
 exports.encrypt = function (self, block) {
   return self._cipher.encryptBlock(block)
 }
@@ -6968,7 +7343,7 @@ exports.decrypt = function (self, block) {
   return self._cipher.decryptBlock(block)
 }
 
-},{}],30:[function(require,module,exports){
+},{}],34:[function(require,module,exports){
 (function (Buffer){
 var xor = require('buffer-xor')
 
@@ -6988,7 +7363,7 @@ exports.encrypt = function (self, chunk) {
 }
 
 }).call(this,require("buffer").Buffer)
-},{"buffer":297,"buffer-xor":35}],31:[function(require,module,exports){
+},{"buffer":299,"buffer-xor":39}],35:[function(require,module,exports){
 (function (Buffer){
 var Transform = require('stream').Transform
 var inherits = require('inherits')
@@ -7082,7 +7457,7 @@ CipherBase.prototype._toString = function (value, enc, final) {
 }
 
 }).call(this,require("buffer").Buffer)
-},{"buffer":297,"inherits":33,"stream":513,"string_decoder":514}],32:[function(require,module,exports){
+},{"buffer":299,"inherits":37,"stream":515,"string_decoder":516}],36:[function(require,module,exports){
 (function (Buffer){
 var md5 = require('create-hash/md5')
 module.exports = EVP_BytesToKey
@@ -7154,7 +7529,7 @@ function EVP_BytesToKey (password, salt, keyLen, ivLen) {
 }
 
 }).call(this,require("buffer").Buffer)
-},{"buffer":297,"create-hash/md5":40}],33:[function(require,module,exports){
+},{"buffer":299,"create-hash/md5":44}],37:[function(require,module,exports){
 if (typeof Object.create === 'function') {
   // implementation from standard node.js 'util' module
   module.exports = function inherits(ctor, superCtor) {
@@ -7179,7 +7554,7 @@ if (typeof Object.create === 'function') {
   }
 }
 
-},{}],34:[function(require,module,exports){
+},{}],38:[function(require,module,exports){
 (function (Buffer){
 var aes = require('./aes')
 var Transform = require('cipher-base')
@@ -7208,7 +7583,7 @@ StreamCipher.prototype._final = function () {
 }
 
 }).call(this,require("buffer").Buffer)
-},{"./aes":17,"buffer":297,"cipher-base":31,"inherits":33}],35:[function(require,module,exports){
+},{"./aes":21,"buffer":299,"cipher-base":35,"inherits":37}],39:[function(require,module,exports){
 (function (Buffer){
 module.exports = function xor (a, b) {
   var length = Math.min(a.length, b.length)
@@ -7222,7 +7597,7 @@ module.exports = function xor (a, b) {
 }
 
 }).call(this,require("buffer").Buffer)
-},{"buffer":297}],36:[function(require,module,exports){
+},{"buffer":299}],40:[function(require,module,exports){
 (function (Buffer){
 var base58 = require('bs58')
 var createHash = require('create-hash')
@@ -7319,7 +7694,7 @@ module.exports = {
 }
 
 }).call(this,require("buffer").Buffer)
-},{"bs58":37,"buffer":297,"create-hash":38}],37:[function(require,module,exports){
+},{"bs58":41,"buffer":299,"create-hash":42}],41:[function(require,module,exports){
 // Base58 encoding/decoding
 // Originally written by Mike Hearn for BitcoinJ
 // Copyright (c) 2011 Google Inc
@@ -7406,7 +7781,7 @@ module.exports = {
   decode: decode
 }
 
-},{}],38:[function(require,module,exports){
+},{}],42:[function(require,module,exports){
 (function (Buffer){
 'use strict';
 var inherits = require('inherits')
@@ -7462,7 +7837,7 @@ module.exports = function createHash (alg) {
 }
 
 }).call(this,require("buffer").Buffer)
-},{"./md5":40,"buffer":297,"cipher-base":41,"inherits":42,"ripemd160":43,"sha.js":45}],39:[function(require,module,exports){
+},{"./md5":44,"buffer":299,"cipher-base":45,"inherits":46,"ripemd160":47,"sha.js":49}],43:[function(require,module,exports){
 (function (Buffer){
 'use strict';
 var intSize = 4;
@@ -7499,7 +7874,7 @@ function hash(buf, fn, hashSize, bigEndian) {
 }
 exports.hash = hash;
 }).call(this,require("buffer").Buffer)
-},{"buffer":297}],40:[function(require,module,exports){
+},{"buffer":299}],44:[function(require,module,exports){
 'use strict';
 /*
  * A JavaScript implementation of the RSA Data Security, Inc. MD5 Message
@@ -7656,11 +8031,11 @@ function bit_rol(num, cnt)
 module.exports = function md5(buf) {
   return helpers.hash(buf, core_md5, 16);
 };
-},{"./helpers":39}],41:[function(require,module,exports){
-arguments[4][31][0].apply(exports,arguments)
-},{"buffer":297,"dup":31,"inherits":42,"stream":513,"string_decoder":514}],42:[function(require,module,exports){
-arguments[4][33][0].apply(exports,arguments)
-},{"dup":33}],43:[function(require,module,exports){
+},{"./helpers":43}],45:[function(require,module,exports){
+arguments[4][35][0].apply(exports,arguments)
+},{"buffer":299,"dup":35,"inherits":46,"stream":515,"string_decoder":516}],46:[function(require,module,exports){
+arguments[4][37][0].apply(exports,arguments)
+},{"dup":37}],47:[function(require,module,exports){
 (function (Buffer){
 /*
 CryptoJS v3.1.2
@@ -7874,7 +8249,7 @@ function ripemd160 (message) {
 module.exports = ripemd160
 
 }).call(this,require("buffer").Buffer)
-},{"buffer":297}],44:[function(require,module,exports){
+},{"buffer":299}],48:[function(require,module,exports){
 (function (Buffer){
 // prototype class for hash functions
 function Hash (blockSize, finalSize) {
@@ -7947,7 +8322,7 @@ Hash.prototype._update = function () {
 module.exports = Hash
 
 }).call(this,require("buffer").Buffer)
-},{"buffer":297}],45:[function(require,module,exports){
+},{"buffer":299}],49:[function(require,module,exports){
 var exports = module.exports = function SHA (algorithm) {
   algorithm = algorithm.toLowerCase()
 
@@ -7964,7 +8339,7 @@ exports.sha256 = require('./sha256')
 exports.sha384 = require('./sha384')
 exports.sha512 = require('./sha512')
 
-},{"./sha":46,"./sha1":47,"./sha224":48,"./sha256":49,"./sha384":50,"./sha512":51}],46:[function(require,module,exports){
+},{"./sha":50,"./sha1":51,"./sha224":52,"./sha256":53,"./sha384":54,"./sha512":55}],50:[function(require,module,exports){
 (function (Buffer){
 /*
  * A JavaScript implementation of the Secure Hash Algorithm, SHA-0, as defined
@@ -8068,7 +8443,7 @@ module.exports = Sha
 
 
 }).call(this,require("buffer").Buffer)
-},{"./hash":44,"buffer":297,"inherits":42}],47:[function(require,module,exports){
+},{"./hash":48,"buffer":299,"inherits":46}],51:[function(require,module,exports){
 (function (Buffer){
 /*
  * A JavaScript implementation of the Secure Hash Algorithm, SHA-1, as defined
@@ -8168,7 +8543,7 @@ Sha1.prototype._hash = function () {
 module.exports = Sha1
 
 }).call(this,require("buffer").Buffer)
-},{"./hash":44,"buffer":297,"inherits":42}],48:[function(require,module,exports){
+},{"./hash":48,"buffer":299,"inherits":46}],52:[function(require,module,exports){
 (function (Buffer){
 /**
  * A JavaScript implementation of the Secure Hash Algorithm, SHA-256, as defined
@@ -8224,7 +8599,7 @@ Sha224.prototype._hash = function () {
 module.exports = Sha224
 
 }).call(this,require("buffer").Buffer)
-},{"./hash":44,"./sha256":49,"buffer":297,"inherits":42}],49:[function(require,module,exports){
+},{"./hash":48,"./sha256":53,"buffer":299,"inherits":46}],53:[function(require,module,exports){
 (function (Buffer){
 /**
  * A JavaScript implementation of the Secure Hash Algorithm, SHA-256, as defined
@@ -8369,7 +8744,7 @@ Sha256.prototype._hash = function () {
 module.exports = Sha256
 
 }).call(this,require("buffer").Buffer)
-},{"./hash":44,"buffer":297,"inherits":42}],50:[function(require,module,exports){
+},{"./hash":48,"buffer":299,"inherits":46}],54:[function(require,module,exports){
 (function (Buffer){
 var inherits = require('inherits')
 var SHA512 = require('./sha512')
@@ -8429,7 +8804,7 @@ Sha384.prototype._hash = function () {
 module.exports = Sha384
 
 }).call(this,require("buffer").Buffer)
-},{"./hash":44,"./sha512":51,"buffer":297,"inherits":42}],51:[function(require,module,exports){
+},{"./hash":48,"./sha512":55,"buffer":299,"inherits":46}],55:[function(require,module,exports){
 (function (Buffer){
 var inherits = require('inherits')
 var Hash = require('./hash')
@@ -8699,7 +9074,7 @@ Sha512.prototype._hash = function () {
 module.exports = Sha512
 
 }).call(this,require("buffer").Buffer)
-},{"./hash":44,"buffer":297,"inherits":42}],52:[function(require,module,exports){
+},{"./hash":48,"buffer":299,"inherits":46}],56:[function(require,module,exports){
 var assert = require('assert')
 var BigInteger = require('bigi')
 
@@ -8775,7 +9150,7 @@ Curve.prototype.validate = function(Q) {
 
 module.exports = Curve
 
-},{"./point":56,"assert":282,"bigi":15}],53:[function(require,module,exports){
+},{"./point":60,"assert":284,"bigi":19}],57:[function(require,module,exports){
 module.exports={
   "secp128r1": {
     "p": "fffffffdffffffffffffffffffffffff",
@@ -8842,7 +9217,7 @@ module.exports={
   }
 }
 
-},{}],54:[function(require,module,exports){
+},{}],58:[function(require,module,exports){
 var Point = require('./point')
 var Curve = require('./curve')
 
@@ -8854,7 +9229,7 @@ module.exports = {
   getCurveByName: getCurveByName
 }
 
-},{"./curve":52,"./names":55,"./point":56}],55:[function(require,module,exports){
+},{"./curve":56,"./names":59,"./point":60}],59:[function(require,module,exports){
 var BigInteger = require('bigi')
 
 var curves = require('./curves')
@@ -8877,7 +9252,7 @@ function getCurveByName(name) {
 
 module.exports = getCurveByName
 
-},{"./curve":52,"./curves":53,"bigi":15}],56:[function(require,module,exports){
+},{"./curve":56,"./curves":57,"bigi":19}],60:[function(require,module,exports){
 (function (Buffer){
 var assert = require('assert')
 var BigInteger = require('bigi')
@@ -9130,7 +9505,7 @@ Point.prototype.toString = function () {
 module.exports = Point
 
 }).call(this,require("buffer").Buffer)
-},{"assert":282,"bigi":15,"buffer":297}],57:[function(require,module,exports){
+},{"assert":284,"bigi":19,"buffer":299}],61:[function(require,module,exports){
 (function (Buffer){
 var pbkdf2Sync = require('pbkdf2').pbkdf2Sync
 
@@ -9313,7 +9688,7 @@ function arraycopy (src, srcPos, dest, destPos, length) {
 module.exports = scrypt
 
 }).call(this,require("buffer").Buffer)
-},{"buffer":297,"pbkdf2":58}],58:[function(require,module,exports){
+},{"buffer":299,"pbkdf2":62}],62:[function(require,module,exports){
 (function (Buffer){
 var createHmac = require('create-hmac')
 var MAX_ALLOC = Math.pow(2, 30) - 1 // default in iojs
@@ -9397,7 +9772,7 @@ function pbkdf2Sync (password, salt, iterations, keylen, digest) {
 }
 
 }).call(this,require("buffer").Buffer)
-},{"buffer":297,"create-hmac":59}],59:[function(require,module,exports){
+},{"buffer":299,"create-hmac":63}],63:[function(require,module,exports){
 (function (Buffer){
 'use strict';
 var createHash = require('create-hash/browser');
@@ -9469,9 +9844,9 @@ module.exports = function createHmac(alg, key) {
 }
 
 }).call(this,require("buffer").Buffer)
-},{"buffer":297,"create-hash/browser":38,"inherits":60,"stream":513}],60:[function(require,module,exports){
-arguments[4][33][0].apply(exports,arguments)
-},{"dup":33}],61:[function(require,module,exports){
+},{"buffer":299,"create-hash/browser":42,"inherits":64,"stream":515}],64:[function(require,module,exports){
+arguments[4][37][0].apply(exports,arguments)
+},{"dup":37}],65:[function(require,module,exports){
 (function (global,Buffer){
 'use strict';
 
@@ -9545,7 +9920,7 @@ bitcore._HDKeyCache = require('./lib/hdkeycache');
 bitcore.Transaction.sighash = require('./lib/transaction/sighash');
 
 }).call(this,typeof global !== "undefined" ? global : typeof self !== "undefined" ? self : typeof window !== "undefined" ? window : {},require("buffer").Buffer)
-},{"./lib/address":62,"./lib/block":65,"./lib/block/blockheader":64,"./lib/block/merkleblock":66,"./lib/crypto/bn":67,"./lib/crypto/ecdsa":68,"./lib/crypto/hash":69,"./lib/crypto/point":70,"./lib/crypto/random":71,"./lib/crypto/signature":72,"./lib/encoding/base58":73,"./lib/encoding/base58check":74,"./lib/encoding/bufferreader":75,"./lib/encoding/bufferwriter":76,"./lib/encoding/varint":77,"./lib/errors":78,"./lib/hdkeycache":80,"./lib/hdprivatekey.js":81,"./lib/hdpublickey.js":82,"./lib/networks":83,"./lib/opcode":84,"./lib/privatekey":85,"./lib/publickey":86,"./lib/script":87,"./lib/transaction":90,"./lib/transaction/sighash":97,"./lib/unit":101,"./lib/uri":102,"./lib/util/buffer":103,"./lib/util/js":104,"./lib/util/preconditions":105,"./package.json":137,"bn.js":106,"bs58":107,"buffer":297,"elliptic":109,"lodash":179}],62:[function(require,module,exports){
+},{"./lib/address":66,"./lib/block":69,"./lib/block/blockheader":68,"./lib/block/merkleblock":70,"./lib/crypto/bn":71,"./lib/crypto/ecdsa":72,"./lib/crypto/hash":73,"./lib/crypto/point":74,"./lib/crypto/random":75,"./lib/crypto/signature":76,"./lib/encoding/base58":77,"./lib/encoding/base58check":78,"./lib/encoding/bufferreader":79,"./lib/encoding/bufferwriter":80,"./lib/encoding/varint":81,"./lib/errors":82,"./lib/hdkeycache":84,"./lib/hdprivatekey.js":85,"./lib/hdpublickey.js":86,"./lib/networks":87,"./lib/opcode":88,"./lib/privatekey":89,"./lib/publickey":90,"./lib/script":91,"./lib/transaction":94,"./lib/transaction/sighash":101,"./lib/unit":105,"./lib/uri":106,"./lib/util/buffer":107,"./lib/util/js":108,"./lib/util/preconditions":109,"./package.json":141,"bn.js":110,"bs58":111,"buffer":299,"elliptic":113,"lodash":181}],66:[function(require,module,exports){
 (function (Buffer){
 'use strict';
 
@@ -10047,7 +10422,7 @@ module.exports = Address;
 var Script = require('./script');
 
 }).call(this,require("buffer").Buffer)
-},{"./crypto/hash":69,"./encoding/base58check":74,"./errors":78,"./networks":83,"./publickey":86,"./script":87,"./util/js":104,"./util/preconditions":105,"buffer":297,"lodash":179}],63:[function(require,module,exports){
+},{"./crypto/hash":73,"./encoding/base58check":78,"./errors":82,"./networks":87,"./publickey":90,"./script":91,"./util/js":108,"./util/preconditions":109,"buffer":299,"lodash":181}],67:[function(require,module,exports){
 (function (Buffer){
 'use strict';
 
@@ -10332,7 +10707,7 @@ Block.Values = {
 module.exports = Block;
 
 }).call(this,require("buffer").Buffer)
-},{"../crypto/bn":67,"../crypto/hash":69,"../encoding/bufferreader":75,"../encoding/bufferwriter":76,"../transaction":90,"../util/buffer":103,"../util/preconditions":105,"./blockheader":64,"buffer":297,"lodash":179}],64:[function(require,module,exports){
+},{"../crypto/bn":71,"../crypto/hash":73,"../encoding/bufferreader":79,"../encoding/bufferwriter":80,"../transaction":94,"../util/buffer":107,"../util/preconditions":109,"./blockheader":68,"buffer":299,"lodash":181}],68:[function(require,module,exports){
 (function (Buffer){
 'use strict';
 
@@ -10632,13 +11007,13 @@ BlockHeader.Constants = {
 module.exports = BlockHeader;
 
 }).call(this,require("buffer").Buffer)
-},{"../crypto/bn":67,"../crypto/hash":69,"../encoding/bufferreader":75,"../encoding/bufferwriter":76,"../util/buffer":103,"../util/js":104,"../util/preconditions":105,"buffer":297,"lodash":179}],65:[function(require,module,exports){
+},{"../crypto/bn":71,"../crypto/hash":73,"../encoding/bufferreader":79,"../encoding/bufferwriter":80,"../util/buffer":107,"../util/js":108,"../util/preconditions":109,"buffer":299,"lodash":181}],69:[function(require,module,exports){
 module.exports = require('./block');
 
 module.exports.BlockHeader = require('./blockheader');
 module.exports.MerkleBlock = require('./merkleblock');
 
-},{"./block":63,"./blockheader":64,"./merkleblock":66}],66:[function(require,module,exports){
+},{"./block":67,"./blockheader":68,"./merkleblock":70}],70:[function(require,module,exports){
 (function (Buffer){
 'use strict';
 
@@ -10914,7 +11289,7 @@ MerkleBlock.fromObject = function fromObject(obj) {
 module.exports = MerkleBlock;
 
 }).call(this,require("buffer").Buffer)
-},{"../crypto/hash":69,"../encoding/bufferreader":75,"../encoding/bufferwriter":76,"../transaction":90,"../util/buffer":103,"../util/js":104,"../util/preconditions":105,"./blockheader":64,"buffer":297,"lodash":179}],67:[function(require,module,exports){
+},{"../crypto/hash":73,"../encoding/bufferreader":79,"../encoding/bufferwriter":80,"../transaction":94,"../util/buffer":107,"../util/js":108,"../util/preconditions":109,"./blockheader":68,"buffer":299,"lodash":181}],71:[function(require,module,exports){
 (function (Buffer){
 'use strict';
 
@@ -11120,7 +11495,7 @@ BN.pad = function(buf, natlen, size) {
 module.exports = BN;
 
 }).call(this,require("buffer").Buffer)
-},{"../util/preconditions":105,"bn.js":106,"buffer":297,"lodash":179}],68:[function(require,module,exports){
+},{"../util/preconditions":109,"bn.js":110,"buffer":299,"lodash":181}],72:[function(require,module,exports){
 (function (Buffer){
 'use strict';
 
@@ -11419,7 +11794,7 @@ ECDSA.verify = function(hashbuf, sig, pubkey, endian) {
 module.exports = ECDSA;
 
 }).call(this,require("buffer").Buffer)
-},{"../publickey":86,"../util/buffer":103,"../util/preconditions":105,"./bn":67,"./hash":69,"./point":70,"./random":71,"./signature":72,"buffer":297,"lodash":179}],69:[function(require,module,exports){
+},{"../publickey":90,"../util/buffer":107,"../util/preconditions":109,"./bn":71,"./hash":73,"./point":74,"./random":75,"./signature":76,"buffer":299,"lodash":181}],73:[function(require,module,exports){
 (function (Buffer){
 'use strict';
 
@@ -11510,7 +11885,7 @@ Hash.sha512hmac = function(data, key) {
 };
 
 }).call(this,require("buffer").Buffer)
-},{"../util/buffer":103,"../util/preconditions":105,"buffer":297,"crypto":301,"sha512":133}],70:[function(require,module,exports){
+},{"../util/buffer":107,"../util/preconditions":109,"buffer":299,"crypto":303,"sha512":137}],74:[function(require,module,exports){
 (function (Buffer){
 'use strict';
 
@@ -11659,7 +12034,7 @@ Point.pointToCompressed = function pointToCompressed(point) {
 module.exports = Point;
 
 }).call(this,require("buffer").Buffer)
-},{"../util/buffer":103,"./bn":67,"buffer":297,"elliptic":109}],71:[function(require,module,exports){
+},{"../util/buffer":107,"./bn":71,"buffer":299,"elliptic":113}],75:[function(require,module,exports){
 (function (process,Buffer){
 'use strict';
 
@@ -11720,7 +12095,7 @@ Random.getPseudoRandomBuffer = function(size) {
 module.exports = Random;
 
 }).call(this,require('_process'),require("buffer").Buffer)
-},{"_process":497,"buffer":297,"crypto":301}],72:[function(require,module,exports){
+},{"_process":499,"buffer":299,"crypto":303}],76:[function(require,module,exports){
 (function (Buffer){
 'use strict';
 
@@ -12036,7 +12411,7 @@ Signature.SIGHASH_ANYONECANPAY = 0x80;
 module.exports = Signature;
 
 }).call(this,require("buffer").Buffer)
-},{"../util/buffer":103,"../util/js":104,"../util/preconditions":105,"./bn":67,"buffer":297,"lodash":179}],73:[function(require,module,exports){
+},{"../util/buffer":107,"../util/js":108,"../util/preconditions":109,"./bn":71,"buffer":299,"lodash":181}],77:[function(require,module,exports){
 (function (Buffer){
 'use strict';
 
@@ -12110,7 +12485,7 @@ Base58.prototype.toString = function() {
 module.exports = Base58;
 
 }).call(this,require("buffer").Buffer)
-},{"bs58":107,"buffer":297,"lodash":179}],74:[function(require,module,exports){
+},{"bs58":111,"buffer":299,"lodash":181}],78:[function(require,module,exports){
 (function (Buffer){
 'use strict';
 
@@ -12209,7 +12584,7 @@ Base58Check.prototype.toString = function() {
 module.exports = Base58Check;
 
 }).call(this,require("buffer").Buffer)
-},{"../crypto/hash":69,"./base58":73,"buffer":297,"lodash":179}],75:[function(require,module,exports){
+},{"../crypto/hash":73,"./base58":77,"buffer":299,"lodash":181}],79:[function(require,module,exports){
 (function (Buffer){
 'use strict';
 
@@ -12405,7 +12780,7 @@ BufferReader.prototype.readReverse = function(len) {
 module.exports = BufferReader;
 
 }).call(this,require("buffer").Buffer)
-},{"../crypto/bn":67,"../util/buffer":103,"../util/preconditions":105,"buffer":297,"lodash":179}],76:[function(require,module,exports){
+},{"../crypto/bn":71,"../util/buffer":107,"../util/preconditions":109,"buffer":299,"lodash":181}],80:[function(require,module,exports){
 (function (Buffer){
 'use strict';
 
@@ -12560,7 +12935,7 @@ BufferWriter.varintBufBN = function(bn) {
 module.exports = BufferWriter;
 
 }).call(this,require("buffer").Buffer)
-},{"../util/buffer":103,"assert":282,"buffer":297}],77:[function(require,module,exports){
+},{"../util/buffer":107,"assert":284,"buffer":299}],81:[function(require,module,exports){
 (function (Buffer){
 'use strict';
 
@@ -12636,7 +13011,7 @@ Varint.prototype.toNumber = function() {
 module.exports = Varint;
 
 }).call(this,require("buffer").Buffer)
-},{"../crypto/bn":67,"./bufferreader":75,"./bufferwriter":76,"buffer":297}],78:[function(require,module,exports){
+},{"../crypto/bn":71,"./bufferreader":79,"./bufferwriter":80,"buffer":299}],82:[function(require,module,exports){
 'use strict';
 
 var _ = require('lodash');
@@ -12699,7 +13074,7 @@ module.exports.extend = function(spec) {
   return traverseNode(bitcore.Error, spec);
 };
 
-},{"./spec":79,"lodash":179}],79:[function(require,module,exports){
+},{"./spec":83,"lodash":181}],83:[function(require,module,exports){
 'use strict';
 
 var docsURL = 'http://bitcore.io/';
@@ -12878,7 +13253,7 @@ module.exports = [{
   }]
 }];
 
-},{}],80:[function(require,module,exports){
+},{}],84:[function(require,module,exports){
 'use strict';
 
 module.exports = {
@@ -12925,7 +13300,7 @@ module.exports = {
   }
 };
 
-},{}],81:[function(require,module,exports){
+},{}],85:[function(require,module,exports){
 (function (Buffer){
 'use strict';
 
@@ -13506,7 +13881,7 @@ assert(HDPrivateKey.ChecksumEnd === HDPrivateKey.SerializedByteSize);
 module.exports = HDPrivateKey;
 
 }).call(this,require("buffer").Buffer)
-},{"./crypto/bn":67,"./crypto/hash":69,"./crypto/point":70,"./crypto/random":71,"./encoding/base58":73,"./encoding/base58check":74,"./errors":78,"./hdkeycache":80,"./hdpublickey":82,"./networks":83,"./privatekey":85,"./util/buffer":103,"./util/js":104,"./util/preconditions":105,"assert":282,"buffer":297,"lodash":179}],82:[function(require,module,exports){
+},{"./crypto/bn":71,"./crypto/hash":73,"./crypto/point":74,"./crypto/random":75,"./encoding/base58":77,"./encoding/base58check":78,"./errors":82,"./hdkeycache":84,"./hdpublickey":86,"./networks":87,"./privatekey":89,"./util/buffer":107,"./util/js":108,"./util/preconditions":109,"assert":284,"buffer":299,"lodash":181}],86:[function(require,module,exports){
 (function (Buffer){
 'use strict';
 
@@ -13974,7 +14349,7 @@ assert(HDPublicKey.ChecksumEnd === HDPublicKey.SerializedByteSize);
 module.exports = HDPublicKey;
 
 }).call(this,require("buffer").Buffer)
-},{"./crypto/bn":67,"./crypto/hash":69,"./crypto/point":70,"./encoding/base58":73,"./encoding/base58check":74,"./errors":78,"./hdkeycache":80,"./hdprivatekey":81,"./networks":83,"./publickey":86,"./util/buffer":103,"./util/js":104,"./util/preconditions":105,"assert":282,"buffer":297,"lodash":179}],83:[function(require,module,exports){
+},{"./crypto/bn":71,"./crypto/hash":73,"./crypto/point":74,"./encoding/base58":77,"./encoding/base58check":78,"./errors":82,"./hdkeycache":84,"./hdprivatekey":85,"./networks":87,"./publickey":90,"./util/buffer":107,"./util/js":108,"./util/preconditions":109,"assert":284,"buffer":299,"lodash":181}],87:[function(require,module,exports){
 'use strict';
 var _ = require('lodash');
 
@@ -14152,7 +14527,7 @@ module.exports = {
   get: get
 };
 
-},{"./util/buffer":103,"./util/js":104,"lodash":179}],84:[function(require,module,exports){
+},{"./util/buffer":107,"./util/js":108,"lodash":181}],88:[function(require,module,exports){
 (function (Buffer){
 'use strict';
 
@@ -14403,7 +14778,7 @@ Opcode.prototype.inspect = function() {
 module.exports = Opcode;
 
 }).call(this,require("buffer").Buffer)
-},{"./util/buffer":103,"./util/js":104,"./util/preconditions":105,"buffer":297,"lodash":179}],85:[function(require,module,exports){
+},{"./util/buffer":107,"./util/js":108,"./util/preconditions":109,"buffer":299,"lodash":181}],89:[function(require,module,exports){
 (function (Buffer){
 'use strict';
 
@@ -14794,7 +15169,7 @@ PrivateKey.prototype.inspect = function() {
 module.exports = PrivateKey;
 
 }).call(this,require("buffer").Buffer)
-},{"./address":62,"./crypto/bn":67,"./crypto/point":70,"./crypto/random":71,"./encoding/base58check":74,"./networks":83,"./publickey":86,"./util/js":104,"./util/preconditions":105,"buffer":297,"lodash":179}],86:[function(require,module,exports){
+},{"./address":66,"./crypto/bn":71,"./crypto/point":74,"./crypto/random":75,"./encoding/base58check":78,"./networks":87,"./publickey":90,"./util/js":108,"./util/preconditions":109,"buffer":299,"lodash":181}],90:[function(require,module,exports){
 (function (Buffer){
 'use strict';
 
@@ -15191,12 +15566,12 @@ PublicKey.prototype.inspect = function() {
 module.exports = PublicKey;
 
 }).call(this,require("buffer").Buffer)
-},{"./address":62,"./crypto/bn":67,"./crypto/hash":69,"./crypto/point":70,"./networks":83,"./privatekey":85,"./util/js":104,"./util/preconditions":105,"buffer":297,"lodash":179}],87:[function(require,module,exports){
+},{"./address":66,"./crypto/bn":71,"./crypto/hash":73,"./crypto/point":74,"./networks":87,"./privatekey":89,"./util/js":108,"./util/preconditions":109,"buffer":299,"lodash":181}],91:[function(require,module,exports){
 module.exports = require('./script');
 
 module.exports.Interpreter = require('./interpreter');
 
-},{"./interpreter":88,"./script":89}],88:[function(require,module,exports){
+},{"./interpreter":92,"./script":93}],92:[function(require,module,exports){
 (function (Buffer){
 'use strict';
 
@@ -16465,7 +16840,7 @@ Interpreter.prototype.step = function() {
 
 
 }).call(this,require("buffer").Buffer)
-},{"../crypto/bn":67,"../crypto/hash":69,"../crypto/signature":72,"../opcode":84,"../publickey":86,"../transaction":90,"./script":89,"buffer":297,"lodash":179}],89:[function(require,module,exports){
+},{"../crypto/bn":71,"../crypto/hash":73,"../crypto/signature":76,"../opcode":88,"../publickey":90,"../transaction":94,"./script":93,"buffer":299,"lodash":181}],93:[function(require,module,exports){
 (function (Buffer){
 'use strict';
 
@@ -17496,7 +17871,7 @@ Script.prototype.getSignatureOperationsCount = function(accurate) {
 module.exports = Script;
 
 }).call(this,require("buffer").Buffer)
-},{"../address":62,"../crypto/hash":69,"../crypto/signature":72,"../encoding/bufferreader":75,"../encoding/bufferwriter":76,"../errors":78,"../networks":83,"../opcode":84,"../publickey":86,"../util/buffer":103,"../util/js":104,"../util/preconditions":105,"buffer":297,"lodash":179}],90:[function(require,module,exports){
+},{"../address":66,"../crypto/hash":73,"../crypto/signature":76,"../encoding/bufferreader":79,"../encoding/bufferwriter":80,"../errors":82,"../networks":87,"../opcode":88,"../publickey":90,"../util/buffer":107,"../util/js":108,"../util/preconditions":109,"buffer":299,"lodash":181}],94:[function(require,module,exports){
 module.exports = require('./transaction');
 
 module.exports.Input = require('./input');
@@ -17504,14 +17879,14 @@ module.exports.Output = require('./output');
 module.exports.UnspentOutput = require('./unspentoutput');
 module.exports.Signature = require('./signature');
 
-},{"./input":91,"./output":96,"./signature":98,"./transaction":99,"./unspentoutput":100}],91:[function(require,module,exports){
+},{"./input":95,"./output":100,"./signature":102,"./transaction":103,"./unspentoutput":104}],95:[function(require,module,exports){
 module.exports = require('./input');
 
 module.exports.PublicKey = require('./publickey');
 module.exports.PublicKeyHash = require('./publickeyhash');
 module.exports.MultiSigScriptHash = require('./multisigscripthash.js');
 
-},{"./input":92,"./multisigscripthash.js":93,"./publickey":94,"./publickeyhash":95}],92:[function(require,module,exports){
+},{"./input":96,"./multisigscripthash.js":97,"./publickey":98,"./publickeyhash":99}],96:[function(require,module,exports){
 'use strict';
 
 var _ = require('lodash');
@@ -17706,7 +18081,7 @@ Input.prototype._estimateSize = function() {
 
 module.exports = Input;
 
-},{"../../encoding/bufferwriter":76,"../../errors":78,"../../script":87,"../../util/buffer":103,"../../util/js":104,"../../util/preconditions":105,"../output":96,"../sighash":97,"buffer":297,"lodash":179}],93:[function(require,module,exports){
+},{"../../encoding/bufferwriter":80,"../../errors":82,"../../script":91,"../../util/buffer":107,"../../util/js":108,"../../util/preconditions":109,"../output":100,"../sighash":101,"buffer":299,"lodash":181}],97:[function(require,module,exports){
 'use strict';
 
 var _ = require('lodash');
@@ -17874,7 +18249,7 @@ MultiSigScriptHashInput.prototype._estimateSize = function() {
 
 module.exports = MultiSigScriptHashInput;
 
-},{"../../crypto/signature":72,"../../publickey":86,"../../script":87,"../../util/buffer":103,"../../util/preconditions":105,"../output":96,"../sighash":97,"../signature":98,"./input":92,"inherits":130,"lodash":179}],94:[function(require,module,exports){
+},{"../../crypto/signature":76,"../../publickey":90,"../../script":91,"../../util/buffer":107,"../../util/preconditions":109,"../output":100,"../sighash":101,"../signature":102,"./input":96,"inherits":134,"lodash":181}],98:[function(require,module,exports){
 'use strict';
 
 var inherits = require('inherits');
@@ -17965,7 +18340,7 @@ PublicKeyInput.prototype._estimateSize = function() {
 
 module.exports = PublicKeyInput;
 
-},{"../../crypto/signature":72,"../../script":87,"../../util/buffer":103,"../../util/preconditions":105,"../output":96,"../sighash":97,"../signature":98,"./input":92,"inherits":130}],95:[function(require,module,exports){
+},{"../../crypto/signature":76,"../../script":91,"../../util/buffer":107,"../../util/preconditions":109,"../output":100,"../sighash":101,"../signature":102,"./input":96,"inherits":134}],99:[function(require,module,exports){
 'use strict';
 
 var inherits = require('inherits');
@@ -18062,7 +18437,7 @@ PublicKeyHashInput.prototype._estimateSize = function() {
 
 module.exports = PublicKeyHashInput;
 
-},{"../../crypto/hash":69,"../../crypto/signature":72,"../../script":87,"../../util/buffer":103,"../../util/preconditions":105,"../output":96,"../sighash":97,"../signature":98,"./input":92,"inherits":130}],96:[function(require,module,exports){
+},{"../../crypto/hash":73,"../../crypto/signature":76,"../../script":91,"../../util/buffer":107,"../../util/preconditions":109,"../output":100,"../sighash":101,"../signature":102,"./input":96,"inherits":134}],100:[function(require,module,exports){
 'use strict';
 
 var _ = require('lodash');
@@ -18232,7 +18607,7 @@ Output.prototype.toBufferWriter = function(writer) {
 
 module.exports = Output;
 
-},{"../crypto/bn":67,"../encoding/bufferwriter":76,"../errors":78,"../script":87,"../util/buffer":103,"../util/js":104,"../util/preconditions":105,"buffer":297,"lodash":179}],97:[function(require,module,exports){
+},{"../crypto/bn":71,"../encoding/bufferwriter":80,"../errors":82,"../script":91,"../util/buffer":107,"../util/js":108,"../util/preconditions":109,"buffer":299,"lodash":181}],101:[function(require,module,exports){
 (function (Buffer){
 'use strict';
 
@@ -18372,7 +18747,7 @@ module.exports = {
 };
 
 }).call(this,require("buffer").Buffer)
-},{"../crypto/bn":67,"../crypto/ecdsa":68,"../crypto/hash":69,"../crypto/signature":72,"../encoding/bufferreader":75,"../encoding/bufferwriter":76,"../script":87,"../util/preconditions":105,"./input":91,"./output":96,"./transaction":99,"buffer":297,"lodash":179}],98:[function(require,module,exports){
+},{"../crypto/bn":71,"../crypto/ecdsa":72,"../crypto/hash":73,"../crypto/signature":76,"../encoding/bufferreader":79,"../encoding/bufferwriter":80,"../script":91,"../util/preconditions":109,"./input":95,"./output":100,"./transaction":103,"buffer":299,"lodash":181}],102:[function(require,module,exports){
 (function (Buffer){
 'use strict';
 
@@ -18465,7 +18840,7 @@ TransactionSignature.fromObject = function(object) {
 module.exports = TransactionSignature;
 
 }).call(this,require("buffer").Buffer)
-},{"../crypto/signature":72,"../errors":78,"../publickey":86,"../util/buffer":103,"../util/js":104,"../util/preconditions":105,"buffer":297,"inherits":130,"lodash":179}],99:[function(require,module,exports){
+},{"../crypto/signature":76,"../errors":82,"../publickey":90,"../util/buffer":107,"../util/js":108,"../util/preconditions":109,"buffer":299,"inherits":134,"lodash":181}],103:[function(require,module,exports){
 (function (Buffer){
 'use strict';
 
@@ -19659,7 +20034,7 @@ Transaction.prototype.isCoinbase = function() {
 module.exports = Transaction;
 
 }).call(this,require("buffer").Buffer)
-},{"../address":62,"../crypto/bn":67,"../crypto/hash":69,"../crypto/signature":72,"../encoding/bufferreader":75,"../encoding/bufferwriter":76,"../errors":78,"../privatekey":85,"../script":87,"../util/buffer":103,"../util/js":104,"../util/preconditions":105,"./input":91,"./output":96,"./sighash":97,"./unspentoutput":100,"buffer":297,"buffer-compare":108,"lodash":179}],100:[function(require,module,exports){
+},{"../address":66,"../crypto/bn":71,"../crypto/hash":73,"../crypto/signature":76,"../encoding/bufferreader":79,"../encoding/bufferwriter":80,"../errors":82,"../privatekey":89,"../script":91,"../util/buffer":107,"../util/js":108,"../util/preconditions":109,"./input":95,"./output":100,"./sighash":101,"./unspentoutput":104,"buffer":299,"buffer-compare":112,"lodash":181}],104:[function(require,module,exports){
 'use strict';
 
 var _ = require('lodash');
@@ -19761,7 +20136,7 @@ UnspentOutput.prototype.toObject = UnspentOutput.prototype.toJSON = function toO
 
 module.exports = UnspentOutput;
 
-},{"../address":62,"../script":87,"../unit":101,"../util/js":104,"../util/preconditions":105,"lodash":179}],101:[function(require,module,exports){
+},{"../address":66,"../script":91,"../unit":105,"../util/js":108,"../util/preconditions":109,"lodash":181}],105:[function(require,module,exports){
 'use strict';
 
 var _ = require('lodash');
@@ -20001,7 +20376,7 @@ Unit.prototype.inspect = function() {
 
 module.exports = Unit;
 
-},{"./errors":78,"./util/preconditions":105,"lodash":179}],102:[function(require,module,exports){
+},{"./errors":82,"./util/preconditions":109,"lodash":181}],106:[function(require,module,exports){
 'use strict';
 
 var _ = require('lodash');
@@ -20226,7 +20601,7 @@ URI.prototype.inspect = function() {
 
 module.exports = URI;
 
-},{"./address":62,"./unit":101,"lodash":179,"url":515}],103:[function(require,module,exports){
+},{"./address":66,"./unit":105,"lodash":181,"url":517}],107:[function(require,module,exports){
 (function (Buffer){
 'use strict';
 
@@ -20407,7 +20782,7 @@ module.exports.NULL_HASH = module.exports.fill(new Buffer(32), 0);
 module.exports.EMPTY_BUFFER = new Buffer(0);
 
 }).call(this,require("buffer").Buffer)
-},{"./js":104,"./preconditions":105,"assert":282,"buffer":297}],104:[function(require,module,exports){
+},{"./js":108,"./preconditions":109,"assert":284,"buffer":299}],108:[function(require,module,exports){
 'use strict';
 
 var _ = require('lodash');
@@ -20493,7 +20868,7 @@ module.exports = {
   }
 };
 
-},{"lodash":179}],105:[function(require,module,exports){
+},{"lodash":181}],109:[function(require,module,exports){
 'use strict';
 
 var errors = require('../errors');
@@ -20529,7 +20904,7 @@ module.exports = {
   }
 };
 
-},{"../errors":78,"./buffer":103,"lodash":179}],106:[function(require,module,exports){
+},{"../errors":82,"./buffer":107,"lodash":181}],110:[function(require,module,exports){
 (function (module, exports) {
 
 'use strict';
@@ -22817,7 +23192,7 @@ Mont.prototype.invm = function invm(a) {
 
 })(typeof module === 'undefined' || module, this);
 
-},{}],107:[function(require,module,exports){
+},{}],111:[function(require,module,exports){
 // Base58 encoding/decoding
 // Originally written by Mike Hearn for BitcoinJ
 // Copyright (c) 2011 Google Inc
@@ -22899,7 +23274,7 @@ module.exports = {
   decode: decode
 }
 
-},{}],108:[function(require,module,exports){
+},{}],112:[function(require,module,exports){
 
 
 module.exports = function(cmp,to){
@@ -22917,7 +23292,7 @@ module.exports = function(cmp,to){
 }
 
 
-},{}],109:[function(require,module,exports){
+},{}],113:[function(require,module,exports){
 'use strict';
 
 var elliptic = exports;
@@ -22932,7 +23307,7 @@ elliptic.curves = require('./elliptic/curves');
 // Protocols
 elliptic.ec = require('./elliptic/ec');
 
-},{"../package.json":129,"./elliptic/curve":112,"./elliptic/curves":115,"./elliptic/ec":116,"./elliptic/hmac-drbg":119,"./elliptic/utils":121,"brorand":122}],110:[function(require,module,exports){
+},{"../package.json":133,"./elliptic/curve":116,"./elliptic/curves":119,"./elliptic/ec":120,"./elliptic/hmac-drbg":123,"./elliptic/utils":125,"brorand":126}],114:[function(require,module,exports){
 'use strict';
 
 var bn = require('bn.js');
@@ -23237,7 +23612,7 @@ BasePoint.prototype.dblp = function dblp(k) {
   return r;
 };
 
-},{"../../elliptic":109,"bn.js":106}],111:[function(require,module,exports){
+},{"../../elliptic":113,"bn.js":110}],115:[function(require,module,exports){
 'use strict';
 
 var curve = require('../curve');
@@ -23610,7 +23985,7 @@ Point.prototype.getY = function getY() {
 Point.prototype.toP = Point.prototype.normalize;
 Point.prototype.mixedAdd = Point.prototype.add;
 
-},{"../../elliptic":109,"../curve":112,"bn.js":106,"inherits":130}],112:[function(require,module,exports){
+},{"../../elliptic":113,"../curve":116,"bn.js":110,"inherits":134}],116:[function(require,module,exports){
 'use strict';
 
 var curve = exports;
@@ -23620,7 +23995,7 @@ curve.short = require('./short');
 curve.mont = require('./mont');
 curve.edwards = require('./edwards');
 
-},{"./base":110,"./edwards":111,"./mont":113,"./short":114}],113:[function(require,module,exports){
+},{"./base":114,"./edwards":115,"./mont":117,"./short":118}],117:[function(require,module,exports){
 'use strict';
 
 var curve = require('../curve');
@@ -23783,7 +24158,7 @@ Point.prototype.getX = function getX() {
   return this.x.fromRed();
 };
 
-},{"../curve":112,"bn.js":106,"inherits":130}],114:[function(require,module,exports){
+},{"../curve":116,"bn.js":110,"inherits":134}],118:[function(require,module,exports){
 'use strict';
 
 var curve = require('../curve');
@@ -24692,7 +25067,7 @@ JPoint.prototype.isInfinity = function isInfinity() {
   return this.z.cmpn(0) === 0;
 };
 
-},{"../../elliptic":109,"../curve":112,"bn.js":106,"inherits":130}],115:[function(require,module,exports){
+},{"../../elliptic":113,"../curve":116,"bn.js":110,"inherits":134}],119:[function(require,module,exports){
 'use strict';
 
 var curves = exports;
@@ -24851,7 +25226,7 @@ defineCurve('secp256k1', {
   ]
 });
 
-},{"../elliptic":109,"./precomputed/secp256k1":120,"hash.js":123}],116:[function(require,module,exports){
+},{"../elliptic":113,"./precomputed/secp256k1":124,"hash.js":127}],120:[function(require,module,exports){
 'use strict';
 
 var bn = require('bn.js');
@@ -25019,7 +25394,7 @@ EC.prototype.verify = function verify(msg, signature, key, enc) {
   return p.getX().mod(this.n).cmp(r) === 0;
 };
 
-},{"../../elliptic":109,"./key":117,"./signature":118,"bn.js":106}],117:[function(require,module,exports){
+},{"../../elliptic":113,"./key":121,"./signature":122,"bn.js":110}],121:[function(require,module,exports){
 'use strict';
 
 var bn = require('bn.js');
@@ -25171,7 +25546,7 @@ KeyPair.prototype.inspect = function inspect() {
          ' pub: ' + (this.pub && this.pub.inspect()) + ' >';
 };
 
-},{"../../elliptic":109,"bn.js":106}],118:[function(require,module,exports){
+},{"../../elliptic":113,"bn.js":110}],122:[function(require,module,exports){
 'use strict';
 
 var bn = require('bn.js');
@@ -25238,7 +25613,7 @@ Signature.prototype.toDER = function toDER(enc) {
   return utils.encode(res, enc);
 };
 
-},{"../../elliptic":109,"bn.js":106}],119:[function(require,module,exports){
+},{"../../elliptic":113,"bn.js":110}],123:[function(require,module,exports){
 'use strict';
 
 var hash = require('hash.js');
@@ -25354,7 +25729,7 @@ HmacDRBG.prototype.generate = function generate(len, enc, add, addEnc) {
   return utils.encode(res, enc);
 };
 
-},{"../elliptic":109,"hash.js":123}],120:[function(require,module,exports){
+},{"../elliptic":113,"hash.js":127}],124:[function(require,module,exports){
 module.exports = {
   doubles: {
     step: 4,
@@ -26136,7 +26511,7 @@ module.exports = {
   }
 };
 
-},{}],121:[function(require,module,exports){
+},{}],125:[function(require,module,exports){
 'use strict';
 
 var utils = exports;
@@ -26288,7 +26663,7 @@ function getJSF(k1, k2) {
 }
 utils.getJSF = getJSF;
 
-},{}],122:[function(require,module,exports){
+},{}],126:[function(require,module,exports){
 var r;
 
 module.exports = function rand(len) {
@@ -26347,7 +26722,7 @@ if (typeof window === 'object') {
   }
 }
 
-},{}],123:[function(require,module,exports){
+},{}],127:[function(require,module,exports){
 var hash = exports;
 
 hash.utils = require('./hash/utils');
@@ -26364,7 +26739,7 @@ hash.sha384 = hash.sha.sha384;
 hash.sha512 = hash.sha.sha512;
 hash.ripemd160 = hash.ripemd.ripemd160;
 
-},{"./hash/common":124,"./hash/hmac":125,"./hash/ripemd":126,"./hash/sha":127,"./hash/utils":128}],124:[function(require,module,exports){
+},{"./hash/common":128,"./hash/hmac":129,"./hash/ripemd":130,"./hash/sha":131,"./hash/utils":132}],128:[function(require,module,exports){
 var hash = require('../hash');
 var utils = hash.utils;
 var assert = utils.assert;
@@ -26457,7 +26832,7 @@ BlockHash.prototype._pad = function pad() {
   return res;
 };
 
-},{"../hash":123}],125:[function(require,module,exports){
+},{"../hash":127}],129:[function(require,module,exports){
 var hmac = exports;
 
 var hash = require('../hash');
@@ -26507,7 +26882,7 @@ Hmac.prototype.digest = function digest(enc) {
   return this.outer.digest(enc);
 };
 
-},{"../hash":123}],126:[function(require,module,exports){
+},{"../hash":127}],130:[function(require,module,exports){
 var hash = require('../hash');
 var utils = hash.utils;
 
@@ -26653,7 +27028,7 @@ var sh = [
   8, 5, 12, 9, 12, 5, 14, 6, 8, 13, 6, 5, 15, 13, 11, 11
 ];
 
-},{"../hash":123}],127:[function(require,module,exports){
+},{"../hash":127}],131:[function(require,module,exports){
 var hash = require('../hash');
 var utils = hash.utils;
 var assert = utils.assert;
@@ -27219,7 +27594,7 @@ function g1_512_lo(xh, xl) {
   return r;
 }
 
-},{"../hash":123}],128:[function(require,module,exports){
+},{"../hash":127}],132:[function(require,module,exports){
 var utils = exports;
 var inherits = require('inherits');
 
@@ -27478,7 +27853,7 @@ function shr64_lo(ah, al, num) {
 };
 exports.shr64_lo = shr64_lo;
 
-},{"inherits":130}],129:[function(require,module,exports){
+},{"inherits":134}],133:[function(require,module,exports){
 module.exports={
   "name": "elliptic",
   "version": "3.0.3",
@@ -27527,9 +27902,9 @@ module.exports={
   "_from": "https://registry.npmjs.org/elliptic/-/elliptic-3.0.3.tgz"
 }
 
-},{}],130:[function(require,module,exports){
-arguments[4][33][0].apply(exports,arguments)
-},{"dup":33}],131:[function(require,module,exports){
+},{}],134:[function(require,module,exports){
+arguments[4][37][0].apply(exports,arguments)
+},{"dup":37}],135:[function(require,module,exports){
 (function (Buffer){
 var WordArray = require('./word-array')
 
@@ -27841,7 +28216,7 @@ module.exports.Hasher = Hasher
 
 
 }).call(this,require("buffer").Buffer)
-},{"./word-array":135,"buffer":297}],132:[function(require,module,exports){
+},{"./word-array":139,"buffer":299}],136:[function(require,module,exports){
 (function (Buffer){
 var sha512 = require('./sha512').sha512
 var WordArray = require('./word-array')
@@ -27937,10 +28312,10 @@ HMAC.prototype.finalize = function (messageUpdate) {
 module.exports = HMAC
 
 }).call(this,require("buffer").Buffer)
-},{"./sha512":134,"./word-array":135,"buffer":297}],133:[function(require,module,exports){
+},{"./sha512":138,"./word-array":139,"buffer":299}],137:[function(require,module,exports){
 module.exports = require('./sha512')
 module.exports.hmac = require('./hmac')
-},{"./hmac":132,"./sha512":134}],134:[function(require,module,exports){
+},{"./hmac":136,"./sha512":138}],138:[function(require,module,exports){
 
 var Hasher = require('./cryptojs').Hasher 
 
@@ -28183,7 +28558,7 @@ module.exports = Hasher._createHelper(SHA512);
 module.exports.sha512 = SHA512
 
 
-},{"./cryptojs":131,"./x64":136}],135:[function(require,module,exports){
+},{"./cryptojs":135,"./x64":140}],139:[function(require,module,exports){
 (function (process,Buffer){
 module.exports = WordArray
 
@@ -28302,7 +28677,7 @@ WordArray.fromBuffer = function(buf) {
 
 
 }).call(this,require('_process'),require("buffer").Buffer)
-},{"_process":497,"buffer":297}],136:[function(require,module,exports){
+},{"_process":499,"buffer":299}],140:[function(require,module,exports){
 var X32WordArray = require('./word-array')
 
 
@@ -28340,10 +28715,10 @@ module.exports.Word = X64Word
 module.exports.WordArray = X64WordArray
 
 
-},{"./word-array":135}],137:[function(require,module,exports){
+},{"./word-array":139}],141:[function(require,module,exports){
 module.exports={
   "name": "bitcore-lib",
-  "version": "0.13.8",
+  "version": "0.13.9",
   "description": "A pure and powerful JavaScript Bitcoin library.",
   "author": {
     "name": "BitPay",
@@ -28442,13 +28817,13 @@ module.exports={
     "sinon": "^1.13.0"
   },
   "license": "MIT",
-  "gitHead": "74c9be98ebd24b4dfa53d35414a88a1ff7d3c1ee",
+  "gitHead": "a0b72f8c516158eaef631032e859a5b59aacc570",
   "bugs": {
     "url": "https://github.com/bitpay/bitcore-lib/issues"
   },
   "homepage": "https://github.com/bitpay/bitcore-lib#readme",
-  "_id": "bitcore-lib@0.13.8",
-  "_shasum": "f252673dde6330ddc63a950b948985463409cb21",
+  "_id": "bitcore-lib@0.13.9",
+  "_shasum": "ce8998954b5724f3003e4971b15f08e7e31a2fa5",
   "_from": "bitcore-lib@>=0.13.7 <0.14.0",
   "_npmVersion": "2.14.7",
   "_nodeVersion": "4.2.1",
@@ -28475,17 +28850,17 @@ module.exports={
     }
   ],
   "dist": {
-    "shasum": "f252673dde6330ddc63a950b948985463409cb21",
-    "tarball": "http://registry.npmjs.org/bitcore-lib/-/bitcore-lib-0.13.8.tgz"
+    "shasum": "ce8998954b5724f3003e4971b15f08e7e31a2fa5",
+    "tarball": "http://registry.npmjs.org/bitcore-lib/-/bitcore-lib-0.13.9.tgz"
   },
   "directories": {},
-  "_resolved": "https://registry.npmjs.org/bitcore-lib/-/bitcore-lib-0.13.8.tgz"
+  "_resolved": "https://registry.npmjs.org/bitcore-lib/-/bitcore-lib-0.13.9.tgz"
 }
 
-},{}],138:[function(require,module,exports){
+},{}],142:[function(require,module,exports){
 module.exports = require('./lib/mnemonic');
 
-},{"./lib/mnemonic":140}],139:[function(require,module,exports){
+},{"./lib/mnemonic":144}],143:[function(require,module,exports){
 'use strict';
 
 var spec = {
@@ -28505,7 +28880,7 @@ var spec = {
 
 module.exports = require('bitcore-lib').errors.extend(spec);
 
-},{"bitcore-lib":61}],140:[function(require,module,exports){
+},{"bitcore-lib":65}],144:[function(require,module,exports){
 (function (Buffer){
 'use strict';
 
@@ -28804,7 +29179,7 @@ Mnemonic._entropyChecksum = function(entropy) {
 module.exports = Mnemonic;
 
 }).call(this,require("buffer").Buffer)
-},{"./errors":139,"./pbkdf2":141,"./words":145,"bitcore-lib":61,"buffer":297,"unorm":148}],141:[function(require,module,exports){
+},{"./errors":143,"./pbkdf2":145,"./words":149,"bitcore-lib":65,"buffer":299,"unorm":152}],145:[function(require,module,exports){
 (function (Buffer){
 'use strict';
 
@@ -28879,25 +29254,25 @@ function pbkdf2(key, salt, iterations, dkLen) {
 module.exports = pbkdf2;
 
 }).call(this,require("buffer").Buffer)
-},{"buffer":297,"crypto":301}],142:[function(require,module,exports){
+},{"buffer":299,"crypto":303}],146:[function(require,module,exports){
 'use strict';
 
 var chinese = ['的', '一', '是', '在', '不', '了', '有', '和', '人', '这', '中', '大', '为', '上', '个', '国', '我', '以', '要', '他', '时', '来', '用', '们', '生', '到', '作', '地', '于', '出', '就', '分', '对', '成', '会', '可', '主', '发', '年', '动', '同', '工', '也', '能', '下', '过', '子', '说', '产', '种', '面', '而', '方', '后', '多', '定', '行', '学', '法', '所', '民', '得', '经', '十', '三', '之', '进', '着', '等', '部', '度', '家', '电', '力', '里', '如', '水', '化', '高', '自', '二', '理', '起', '小', '物', '现', '实', '加', '量', '都', '两', '体', '制', '机', '当', '使', '点', '从', '业', '本', '去', '把', '性', '好', '应', '开', '它', '合', '还', '因', '由', '其', '些', '然', '前', '外', '天', '政', '四', '日', '那', '社', '义', '事', '平', '形', '相', '全', '表', '间', '样', '与', '关', '各', '重', '新', '线', '内', '数', '正', '心', '反', '你', '明', '看', '原', '又', '么', '利', '比', '或', '但', '质', '气', '第', '向', '道', '命', '此', '变', '条', '只', '没', '结', '解', '问', '意', '建', '月', '公', '无', '系', '军', '很', '情', '者', '最', '立', '代', '想', '已', '通', '并', '提', '直', '题', '党', '程', '展', '五', '果', '料', '象', '员', '革', '位', '入', '常', '文', '总', '次', '品', '式', '活', '设', '及', '管', '特', '件', '长', '求', '老', '头', '基', '资', '边', '流', '路', '级', '少', '图', '山', '统', '接', '知', '较', '将', '组', '见', '计', '别', '她', '手', '角', '期', '根', '论', '运', '农', '指', '几', '九', '区', '强', '放', '决', '西', '被', '干', '做', '必', '战', '先', '回', '则', '任', '取', '据', '处', '队', '南', '给', '色', '光', '门', '即', '保', '治', '北', '造', '百', '规', '热', '领', '七', '海', '口', '东', '导', '器', '压', '志', '世', '金', '增', '争', '济', '阶', '油', '思', '术', '极', '交', '受', '联', '什', '认', '六', '共', '权', '收', '证', '改', '清', '美', '再', '采', '转', '更', '单', '风', '切', '打', '白', '教', '速', '花', '带', '安', '场', '身', '车', '例', '真', '务', '具', '万', '每', '目', '至', '达', '走', '积', '示', '议', '声', '报', '斗', '完', '类', '八', '离', '华', '名', '确', '才', '科', '张', '信', '马', '节', '话', '米', '整', '空', '元', '况', '今', '集', '温', '传', '土', '许', '步', '群', '广', '石', '记', '需', '段', '研', '界', '拉', '林', '律', '叫', '且', '究', '观', '越', '织', '装', '影', '算', '低', '持', '音', '众', '书', '布', '复', '容', '儿', '须', '际', '商', '非', '验', '连', '断', '深', '难', '近', '矿', '千', '周', '委', '素', '技', '备', '半', '办', '青', '省', '列', '习', '响', '约', '支', '般', '史', '感', '劳', '便', '团', '往', '酸', '历', '市', '克', '何', '除', '消', '构', '府', '称', '太', '准', '精', '值', '号', '率', '族', '维', '划', '选', '标', '写', '存', '候', '毛', '亲', '快', '效', '斯', '院', '查', '江', '型', '眼', '王', '按', '格', '养', '易', '置', '派', '层', '片', '始', '却', '专', '状', '育', '厂', '京', '识', '适', '属', '圆', '包', '火', '住', '调', '满', '县', '局', '照', '参', '红', '细', '引', '听', '该', '铁', '价', '严', '首', '底', '液', '官', '德', '随', '病', '苏', '失', '尔', '死', '讲', '配', '女', '黄', '推', '显', '谈', '罪', '神', '艺', '呢', '席', '含', '企', '望', '密', '批', '营', '项', '防', '举', '球', '英', '氧', '势', '告', '李', '台', '落', '木', '帮', '轮', '破', '亚', '师', '围', '注', '远', '字', '材', '排', '供', '河', '态', '封', '另', '施', '减', '树', '溶', '怎', '止', '案', '言', '士', '均', '武', '固', '叶', '鱼', '波', '视', '仅', '费', '紧', '爱', '左', '章', '早', '朝', '害', '续', '轻', '服', '试', '食', '充', '兵', '源', '判', '护', '司', '足', '某', '练', '差', '致', '板', '田', '降', '黑', '犯', '负', '击', '范', '继', '兴', '似', '余', '坚', '曲', '输', '修', '故', '城', '夫', '够', '送', '笔', '船', '占', '右', '财', '吃', '富', '春', '职', '觉', '汉', '画', '功', '巴', '跟', '虽', '杂', '飞', '检', '吸', '助', '升', '阳', '互', '初', '创', '抗', '考', '投', '坏', '策', '古', '径', '换', '未', '跑', '留', '钢', '曾', '端', '责', '站', '简', '述', '钱', '副', '尽', '帝', '射', '草', '冲', '承', '独', '令', '限', '阿', '宣', '环', '双', '请', '超', '微', '让', '控', '州', '良', '轴', '找', '否', '纪', '益', '依', '优', '顶', '础', '载', '倒', '房', '突', '坐', '粉', '敌', '略', '客', '袁', '冷', '胜', '绝', '析', '块', '剂', '测', '丝', '协', '诉', '念', '陈', '仍', '罗', '盐', '友', '洋', '错', '苦', '夜', '刑', '移', '频', '逐', '靠', '混', '母', '短', '皮', '终', '聚', '汽', '村', '云', '哪', '既', '距', '卫', '停', '烈', '央', '察', '烧', '迅', '境', '若', '印', '洲', '刻', '括', '激', '孔', '搞', '甚', '室', '待', '核', '校', '散', '侵', '吧', '甲', '游', '久', '菜', '味', '旧', '模', '湖', '货', '损', '预', '阻', '毫', '普', '稳', '乙', '妈', '植', '息', '扩', '银', '语', '挥', '酒', '守', '拿', '序', '纸', '医', '缺', '雨', '吗', '针', '刘', '啊', '急', '唱', '误', '训', '愿', '审', '附', '获', '茶', '鲜', '粮', '斤', '孩', '脱', '硫', '肥', '善', '龙', '演', '父', '渐', '血', '欢', '械', '掌', '歌', '沙', '刚', '攻', '谓', '盾', '讨', '晚', '粒', '乱', '燃', '矛', '乎', '杀', '药', '宁', '鲁', '贵', '钟', '煤', '读', '班', '伯', '香', '介', '迫', '句', '丰', '培', '握', '兰', '担', '弦', '蛋', '沉', '假', '穿', '执', '答', '乐', '谁', '顺', '烟', '缩', '征', '脸', '喜', '松', '脚', '困', '异', '免', '背', '星', '福', '买', '染', '井', '概', '慢', '怕', '磁', '倍', '祖', '皇', '促', '静', '补', '评', '翻', '肉', '践', '尼', '衣', '宽', '扬', '棉', '希', '伤', '操', '垂', '秋', '宜', '氢', '套', '督', '振', '架', '亮', '末', '宪', '庆', '编', '牛', '触', '映', '雷', '销', '诗', '座', '居', '抓', '裂', '胞', '呼', '娘', '景', '威', '绿', '晶', '厚', '盟', '衡', '鸡', '孙', '延', '危', '胶', '屋', '乡', '临', '陆', '顾', '掉', '呀', '灯', '岁', '措', '束', '耐', '剧', '玉', '赵', '跳', '哥', '季', '课', '凯', '胡', '额', '款', '绍', '卷', '齐', '伟', '蒸', '殖', '永', '宗', '苗', '川', '炉', '岩', '弱', '零', '杨', '奏', '沿', '露', '杆', '探', '滑', '镇', '饭', '浓', '航', '怀', '赶', '库', '夺', '伊', '灵', '税', '途', '灭', '赛', '归', '召', '鼓', '播', '盘', '裁', '险', '康', '唯', '录', '菌', '纯', '借', '糖', '盖', '横', '符', '私', '努', '堂', '域', '枪', '润', '幅', '哈', '竟', '熟', '虫', '泽', '脑', '壤', '碳', '欧', '遍', '侧', '寨', '敢', '彻', '虑', '斜', '薄', '庭', '纳', '弹', '饲', '伸', '折', '麦', '湿', '暗', '荷', '瓦', '塞', '床', '筑', '恶', '户', '访', '塔', '奇', '透', '梁', '刀', '旋', '迹', '卡', '氯', '遇', '份', '毒', '泥', '退', '洗', '摆', '灰', '彩', '卖', '耗', '夏', '择', '忙', '铜', '献', '硬', '予', '繁', '圈', '雪', '函', '亦', '抽', '篇', '阵', '阴', '丁', '尺', '追', '堆', '雄', '迎', '泛', '爸', '楼', '避', '谋', '吨', '野', '猪', '旗', '累', '偏', '典', '馆', '索', '秦', '脂', '潮', '爷', '豆', '忽', '托', '惊', '塑', '遗', '愈', '朱', '替', '纤', '粗', '倾', '尚', '痛', '楚', '谢', '奋', '购', '磨', '君', '池', '旁', '碎', '骨', '监', '捕', '弟', '暴', '割', '贯', '殊', '释', '词', '亡', '壁', '顿', '宝', '午', '尘', '闻', '揭', '炮', '残', '冬', '桥', '妇', '警', '综', '招', '吴', '付', '浮', '遭', '徐', '您', '摇', '谷', '赞', '箱', '隔', '订', '男', '吹', '园', '纷', '唐', '败', '宋', '玻', '巨', '耕', '坦', '荣', '闭', '湾', '键', '凡', '驻', '锅', '救', '恩', '剥', '凝', '碱', '齿', '截', '炼', '麻', '纺', '禁', '废', '盛', '版', '缓', '净', '睛', '昌', '婚', '涉', '筒', '嘴', '插', '岸', '朗', '庄', '街', '藏', '姑', '贸', '腐', '奴', '啦', '惯', '乘', '伙', '恢', '匀', '纱', '扎', '辩', '耳', '彪', '臣', '亿', '璃', '抵', '脉', '秀', '萨', '俄', '网', '舞', '店', '喷', '纵', '寸', '汗', '挂', '洪', '贺', '闪', '柬', '爆', '烯', '津', '稻', '墙', '软', '勇', '像', '滚', '厘', '蒙', '芳', '肯', '坡', '柱', '荡', '腿', '仪', '旅', '尾', '轧', '冰', '贡', '登', '黎', '削', '钻', '勒', '逃', '障', '氨', '郭', '峰', '币', '港', '伏', '轨', '亩', '毕', '擦', '莫', '刺', '浪', '秘', '援', '株', '健', '售', '股', '岛', '甘', '泡', '睡', '童', '铸', '汤', '阀', '休', '汇', '舍', '牧', '绕', '炸', '哲', '磷', '绩', '朋', '淡', '尖', '启', '陷', '柴', '呈', '徒', '颜', '泪', '稍', '忘', '泵', '蓝', '拖', '洞', '授', '镜', '辛', '壮', '锋', '贫', '虚', '弯', '摩', '泰', '幼', '廷', '尊', '窗', '纲', '弄', '隶', '疑', '氏', '宫', '姐', '震', '瑞', '怪', '尤', '琴', '循', '描', '膜', '违', '夹', '腰', '缘', '珠', '穷', '森', '枝', '竹', '沟', '催', '绳', '忆', '邦', '剩', '幸', '浆', '栏', '拥', '牙', '贮', '礼', '滤', '钠', '纹', '罢', '拍', '咱', '喊', '袖', '埃', '勤', '罚', '焦', '潜', '伍', '墨', '欲', '缝', '姓', '刊', '饱', '仿', '奖', '铝', '鬼', '丽', '跨', '默', '挖', '链', '扫', '喝', '袋', '炭', '污', '幕', '诸', '弧', '励', '梅', '奶', '洁', '灾', '舟', '鉴', '苯', '讼', '抱', '毁', '懂', '寒', '智', '埔', '寄', '届', '跃', '渡', '挑', '丹', '艰', '贝', '碰', '拔', '爹', '戴', '码', '梦', '芽', '熔', '赤', '渔', '哭', '敬', '颗', '奔', '铅', '仲', '虎', '稀', '妹', '乏', '珍', '申', '桌', '遵', '允', '隆', '螺', '仓', '魏', '锐', '晓', '氮', '兼', '隐', '碍', '赫', '拨', '忠', '肃', '缸', '牵', '抢', '博', '巧', '壳', '兄', '杜', '讯', '诚', '碧', '祥', '柯', '页', '巡', '矩', '悲', '灌', '龄', '伦', '票', '寻', '桂', '铺', '圣', '恐', '恰', '郑', '趣', '抬', '荒', '腾', '贴', '柔', '滴', '猛', '阔', '辆', '妻', '填', '撤', '储', '签', '闹', '扰', '紫', '砂', '递', '戏', '吊', '陶', '伐', '喂', '疗', '瓶', '婆', '抚', '臂', '摸', '忍', '虾', '蜡', '邻', '胸', '巩', '挤', '偶', '弃', '槽', '劲', '乳', '邓', '吉', '仁', '烂', '砖', '租', '乌', '舰', '伴', '瓜', '浅', '丙', '暂', '燥', '橡', '柳', '迷', '暖', '牌', '秧', '胆', '详', '簧', '踏', '瓷', '谱', '呆', '宾', '糊', '洛', '辉', '愤', '竞', '隙', '怒', '粘', '乃', '绪', '肩', '籍', '敏', '涂', '熙', '皆', '侦', '悬', '掘', '享', '纠', '醒', '狂', '锁', '淀', '恨', '牲', '霸', '爬', '赏', '逆', '玩', '陵', '祝', '秒', '浙', '貌', '役', '彼', '悉', '鸭', '趋', '凤', '晨', '畜', '辈', '秩', '卵', '署', '梯', '炎', '滩', '棋', '驱', '筛', '峡', '冒', '啥', '寿', '译', '浸', '泉', '帽', '迟', '硅', '疆', '贷', '漏', '稿', '冠', '嫩', '胁', '芯', '牢', '叛', '蚀', '奥', '鸣', '岭', '羊', '凭', '串', '塘', '绘', '酵', '融', '盆', '锡', '庙', '筹', '冻', '辅', '摄', '袭', '筋', '拒', '僚', '旱', '钾', '鸟', '漆', '沈', '眉', '疏', '添', '棒', '穗', '硝', '韩', '逼', '扭', '侨', '凉', '挺', '碗', '栽', '炒', '杯', '患', '馏', '劝', '豪', '辽', '勃', '鸿', '旦', '吏', '拜', '狗', '埋', '辊', '掩', '饮', '搬', '骂', '辞', '勾', '扣', '估', '蒋', '绒', '雾', '丈', '朵', '姆', '拟', '宇', '辑', '陕', '雕', '偿', '蓄', '崇', '剪', '倡', '厅', '咬', '驶', '薯', '刷', '斥', '番', '赋', '奉', '佛', '浇', '漫', '曼', '扇', '钙', '桃', '扶', '仔', '返', '俗', '亏', '腔', '鞋', '棱', '覆', '框', '悄', '叔', '撞', '骗', '勘', '旺', '沸', '孤', '吐', '孟', '渠', '屈', '疾', '妙', '惜', '仰', '狠', '胀', '谐', '抛', '霉', '桑', '岗', '嘛', '衰', '盗', '渗', '脏', '赖', '涌', '甜', '曹', '阅', '肌', '哩', '厉', '烃', '纬', '毅', '昨', '伪', '症', '煮', '叹', '钉', '搭', '茎', '笼', '酷', '偷', '弓', '锥', '恒', '杰', '坑', '鼻', '翼', '纶', '叙', '狱', '逮', '罐', '络', '棚', '抑', '膨', '蔬', '寺', '骤', '穆', '冶', '枯', '册', '尸', '凸', '绅', '坯', '牺', '焰', '轰', '欣', '晋', '瘦', '御', '锭', '锦', '丧', '旬', '锻', '垄', '搜', '扑', '邀', '亭', '酯', '迈', '舒', '脆', '酶', '闲', '忧', '酚', '顽', '羽', '涨', '卸', '仗', '陪', '辟', '惩', '杭', '姚', '肚', '捉', '飘', '漂', '昆', '欺', '吾', '郎', '烷', '汁', '呵', '饰', '萧', '雅', '邮', '迁', '燕', '撒', '姻', '赴', '宴', '烦', '债', '帐', '斑', '铃', '旨', '醇', '董', '饼', '雏', '姿', '拌', '傅', '腹', '妥', '揉', '贤', '拆', '歪', '葡', '胺', '丢', '浩', '徽', '昂', '垫', '挡', '览', '贪', '慰', '缴', '汪', '慌', '冯', '诺', '姜', '谊', '凶', '劣', '诬', '耀', '昏', '躺', '盈', '骑', '乔', '溪', '丛', '卢', '抹', '闷', '咨', '刮', '驾', '缆', '悟', '摘', '铒', '掷', '颇', '幻', '柄', '惠', '惨', '佳', '仇', '腊', '窝', '涤', '剑', '瞧', '堡', '泼', '葱', '罩', '霍', '捞', '胎', '苍', '滨', '俩', '捅', '湘', '砍', '霞', '邵', '萄', '疯', '淮', '遂', '熊', '粪', '烘', '宿', '档', '戈', '驳', '嫂', '裕', '徙', '箭', '捐', '肠', '撑', '晒', '辨', '殿', '莲', '摊', '搅', '酱', '屏', '疫', '哀', '蔡', '堵', '沫', '皱', '畅', '叠', '阁', '莱', '敲', '辖', '钩', '痕', '坝', '巷', '饿', '祸', '丘', '玄', '溜', '曰', '逻', '彭', '尝', '卿', '妨', '艇', '吞', '韦', '怨', '矮', '歇'];
 
 module.exports = chinese;
-},{}],143:[function(require,module,exports){
+},{}],147:[function(require,module,exports){
 'use strict';
 
 var english = ['abandon', 'ability', 'able', 'about', 'above', 'absent', 'absorb', 'abstract', 'absurd', 'abuse', 'access', 'accident', 'account', 'accuse', 'achieve', 'acid', 'acoustic', 'acquire', 'across', 'act', 'action', 'actor', 'actress', 'actual', 'adapt', 'add', 'addict', 'address', 'adjust', 'admit', 'adult', 'advance', 'advice', 'aerobic', 'affair', 'afford', 'afraid', 'again', 'age', 'agent', 'agree', 'ahead', 'aim', 'air', 'airport', 'aisle', 'alarm', 'album', 'alcohol', 'alert', 'alien', 'all', 'alley', 'allow', 'almost', 'alone', 'alpha', 'already', 'also', 'alter', 'always', 'amateur', 'amazing', 'among', 'amount', 'amused', 'analyst', 'anchor', 'ancient', 'anger', 'angle', 'angry', 'animal', 'ankle', 'announce', 'annual', 'another', 'answer', 'antenna', 'antique', 'anxiety', 'any', 'apart', 'apology', 'appear', 'apple', 'approve', 'april', 'arch', 'arctic', 'area', 'arena', 'argue', 'arm', 'armed', 'armor', 'army', 'around', 'arrange', 'arrest', 'arrive', 'arrow', 'art', 'artefact', 'artist', 'artwork', 'ask', 'aspect', 'assault', 'asset', 'assist', 'assume', 'asthma', 'athlete', 'atom', 'attack', 'attend', 'attitude', 'attract', 'auction', 'audit', 'august', 'aunt', 'author', 'auto', 'autumn', 'average', 'avocado', 'avoid', 'awake', 'aware', 'away', 'awesome', 'awful', 'awkward', 'axis', 'baby', 'bachelor', 'bacon', 'badge', 'bag', 'balance', 'balcony', 'ball', 'bamboo', 'banana', 'banner', 'bar', 'barely', 'bargain', 'barrel', 'base', 'basic', 'basket', 'battle', 'beach', 'bean', 'beauty', 'because', 'become', 'beef', 'before', 'begin', 'behave', 'behind', 'believe', 'below', 'belt', 'bench', 'benefit', 'best', 'betray', 'better', 'between', 'beyond', 'bicycle', 'bid', 'bike', 'bind', 'biology', 'bird', 'birth', 'bitter', 'black', 'blade', 'blame', 'blanket', 'blast', 'bleak', 'bless', 'blind', 'blood', 'blossom', 'blouse', 'blue', 'blur', 'blush', 'board', 'boat', 'body', 'boil', 'bomb', 'bone', 'bonus', 'book', 'boost', 'border', 'boring', 'borrow', 'boss', 'bottom', 'bounce', 'box', 'boy', 'bracket', 'brain', 'brand', 'brass', 'brave', 'bread', 'breeze', 'brick', 'bridge', 'brief', 'bright', 'bring', 'brisk', 'broccoli', 'broken', 'bronze', 'broom', 'brother', 'brown', 'brush', 'bubble', 'buddy', 'budget', 'buffalo', 'build', 'bulb', 'bulk', 'bullet', 'bundle', 'bunker', 'burden', 'burger', 'burst', 'bus', 'business', 'busy', 'butter', 'buyer', 'buzz', 'cabbage', 'cabin', 'cable', 'cactus', 'cage', 'cake', 'call', 'calm', 'camera', 'camp', 'can', 'canal', 'cancel', 'candy', 'cannon', 'canoe', 'canvas', 'canyon', 'capable', 'capital', 'captain', 'car', 'carbon', 'card', 'cargo', 'carpet', 'carry', 'cart', 'case', 'cash', 'casino', 'castle', 'casual', 'cat', 'catalog', 'catch', 'category', 'cattle', 'caught', 'cause', 'caution', 'cave', 'ceiling', 'celery', 'cement', 'census', 'century', 'cereal', 'certain', 'chair', 'chalk', 'champion', 'change', 'chaos', 'chapter', 'charge', 'chase', 'chat', 'cheap', 'check', 'cheese', 'chef', 'cherry', 'chest', 'chicken', 'chief', 'child', 'chimney', 'choice', 'choose', 'chronic', 'chuckle', 'chunk', 'churn', 'cigar', 'cinnamon', 'circle', 'citizen', 'city', 'civil', 'claim', 'clap', 'clarify', 'claw', 'clay', 'clean', 'clerk', 'clever', 'click', 'client', 'cliff', 'climb', 'clinic', 'clip', 'clock', 'clog', 'close', 'cloth', 'cloud', 'clown', 'club', 'clump', 'cluster', 'clutch', 'coach', 'coast', 'coconut', 'code', 'coffee', 'coil', 'coin', 'collect', 'color', 'column', 'combine', 'come', 'comfort', 'comic', 'common', 'company', 'concert', 'conduct', 'confirm', 'congress', 'connect', 'consider', 'control', 'convince', 'cook', 'cool', 'copper', 'copy', 'coral', 'core', 'corn', 'correct', 'cost', 'cotton', 'couch', 'country', 'couple', 'course', 'cousin', 'cover', 'coyote', 'crack', 'cradle', 'craft', 'cram', 'crane', 'crash', 'crater', 'crawl', 'crazy', 'cream', 'credit', 'creek', 'crew', 'cricket', 'crime', 'crisp', 'critic', 'crop', 'cross', 'crouch', 'crowd', 'crucial', 'cruel', 'cruise', 'crumble', 'crunch', 'crush', 'cry', 'crystal', 'cube', 'culture', 'cup', 'cupboard', 'curious', 'current', 'curtain', 'curve', 'cushion', 'custom', 'cute', 'cycle', 'dad', 'damage', 'damp', 'dance', 'danger', 'daring', 'dash', 'daughter', 'dawn', 'day', 'deal', 'debate', 'debris', 'decade', 'december', 'decide', 'decline', 'decorate', 'decrease', 'deer', 'defense', 'define', 'defy', 'degree', 'delay', 'deliver', 'demand', 'demise', 'denial', 'dentist', 'deny', 'depart', 'depend', 'deposit', 'depth', 'deputy', 'derive', 'describe', 'desert', 'design', 'desk', 'despair', 'destroy', 'detail', 'detect', 'develop', 'device', 'devote', 'diagram', 'dial', 'diamond', 'diary', 'dice', 'diesel', 'diet', 'differ', 'digital', 'dignity', 'dilemma', 'dinner', 'dinosaur', 'direct', 'dirt', 'disagree', 'discover', 'disease', 'dish', 'dismiss', 'disorder', 'display', 'distance', 'divert', 'divide', 'divorce', 'dizzy', 'doctor', 'document', 'dog', 'doll', 'dolphin', 'domain', 'donate', 'donkey', 'donor', 'door', 'dose', 'double', 'dove', 'draft', 'dragon', 'drama', 'drastic', 'draw', 'dream', 'dress', 'drift', 'drill', 'drink', 'drip', 'drive', 'drop', 'drum', 'dry', 'duck', 'dumb', 'dune', 'during', 'dust', 'dutch', 'duty', 'dwarf', 'dynamic', 'eager', 'eagle', 'early', 'earn', 'earth', 'easily', 'east', 'easy', 'echo', 'ecology', 'economy', 'edge', 'edit', 'educate', 'effort', 'egg', 'eight', 'either', 'elbow', 'elder', 'electric', 'elegant', 'element', 'elephant', 'elevator', 'elite', 'else', 'embark', 'embody', 'embrace', 'emerge', 'emotion', 'employ', 'empower', 'empty', 'enable', 'enact', 'end', 'endless', 'endorse', 'enemy', 'energy', 'enforce', 'engage', 'engine', 'enhance', 'enjoy', 'enlist', 'enough', 'enrich', 'enroll', 'ensure', 'enter', 'entire', 'entry', 'envelope', 'episode', 'equal', 'equip', 'era', 'erase', 'erode', 'erosion', 'error', 'erupt', 'escape', 'essay', 'essence', 'estate', 'eternal', 'ethics', 'evidence', 'evil', 'evoke', 'evolve', 'exact', 'example', 'excess', 'exchange', 'excite', 'exclude', 'excuse', 'execute', 'exercise', 'exhaust', 'exhibit', 'exile', 'exist', 'exit', 'exotic', 'expand', 'expect', 'expire', 'explain', 'expose', 'express', 'extend', 'extra', 'eye', 'eyebrow', 'fabric', 'face', 'faculty', 'fade', 'faint', 'faith', 'fall', 'false', 'fame', 'family', 'famous', 'fan', 'fancy', 'fantasy', 'farm', 'fashion', 'fat', 'fatal', 'father', 'fatigue', 'fault', 'favorite', 'feature', 'february', 'federal', 'fee', 'feed', 'feel', 'female', 'fence', 'festival', 'fetch', 'fever', 'few', 'fiber', 'fiction', 'field', 'figure', 'file', 'film', 'filter', 'final', 'find', 'fine', 'finger', 'finish', 'fire', 'firm', 'first', 'fiscal', 'fish', 'fit', 'fitness', 'fix', 'flag', 'flame', 'flash', 'flat', 'flavor', 'flee', 'flight', 'flip', 'float', 'flock', 'floor', 'flower', 'fluid', 'flush', 'fly', 'foam', 'focus', 'fog', 'foil', 'fold', 'follow', 'food', 'foot', 'force', 'forest', 'forget', 'fork', 'fortune', 'forum', 'forward', 'fossil', 'foster', 'found', 'fox', 'fragile', 'frame', 'frequent', 'fresh', 'friend', 'fringe', 'frog', 'front', 'frost', 'frown', 'frozen', 'fruit', 'fuel', 'fun', 'funny', 'furnace', 'fury', 'future', 'gadget', 'gain', 'galaxy', 'gallery', 'game', 'gap', 'garage', 'garbage', 'garden', 'garlic', 'garment', 'gas', 'gasp', 'gate', 'gather', 'gauge', 'gaze', 'general', 'genius', 'genre', 'gentle', 'genuine', 'gesture', 'ghost', 'giant', 'gift', 'giggle', 'ginger', 'giraffe', 'girl', 'give', 'glad', 'glance', 'glare', 'glass', 'glide', 'glimpse', 'globe', 'gloom', 'glory', 'glove', 'glow', 'glue', 'goat', 'goddess', 'gold', 'good', 'goose', 'gorilla', 'gospel', 'gossip', 'govern', 'gown', 'grab', 'grace', 'grain', 'grant', 'grape', 'grass', 'gravity', 'great', 'green', 'grid', 'grief', 'grit', 'grocery', 'group', 'grow', 'grunt', 'guard', 'guess', 'guide', 'guilt', 'guitar', 'gun', 'gym', 'habit', 'hair', 'half', 'hammer', 'hamster', 'hand', 'happy', 'harbor', 'hard', 'harsh', 'harvest', 'hat', 'have', 'hawk', 'hazard', 'head', 'health', 'heart', 'heavy', 'hedgehog', 'height', 'hello', 'helmet', 'help', 'hen', 'hero', 'hidden', 'high', 'hill', 'hint', 'hip', 'hire', 'history', 'hobby', 'hockey', 'hold', 'hole', 'holiday', 'hollow', 'home', 'honey', 'hood', 'hope', 'horn', 'horror', 'horse', 'hospital', 'host', 'hotel', 'hour', 'hover', 'hub', 'huge', 'human', 'humble', 'humor', 'hundred', 'hungry', 'hunt', 'hurdle', 'hurry', 'hurt', 'husband', 'hybrid', 'ice', 'icon', 'idea', 'identify', 'idle', 'ignore', 'ill', 'illegal', 'illness', 'image', 'imitate', 'immense', 'immune', 'impact', 'impose', 'improve', 'impulse', 'inch', 'include', 'income', 'increase', 'index', 'indicate', 'indoor', 'industry', 'infant', 'inflict', 'inform', 'inhale', 'inherit', 'initial', 'inject', 'injury', 'inmate', 'inner', 'innocent', 'input', 'inquiry', 'insane', 'insect', 'inside', 'inspire', 'install', 'intact', 'interest', 'into', 'invest', 'invite', 'involve', 'iron', 'island', 'isolate', 'issue', 'item', 'ivory', 'jacket', 'jaguar', 'jar', 'jazz', 'jealous', 'jeans', 'jelly', 'jewel', 'job', 'join', 'joke', 'journey', 'joy', 'judge', 'juice', 'jump', 'jungle', 'junior', 'junk', 'just', 'kangaroo', 'keen', 'keep', 'ketchup', 'key', 'kick', 'kid', 'kidney', 'kind', 'kingdom', 'kiss', 'kit', 'kitchen', 'kite', 'kitten', 'kiwi', 'knee', 'knife', 'knock', 'know', 'lab', 'label', 'labor', 'ladder', 'lady', 'lake', 'lamp', 'language', 'laptop', 'large', 'later', 'latin', 'laugh', 'laundry', 'lava', 'law', 'lawn', 'lawsuit', 'layer', 'lazy', 'leader', 'leaf', 'learn', 'leave', 'lecture', 'left', 'leg', 'legal', 'legend', 'leisure', 'lemon', 'lend', 'length', 'lens', 'leopard', 'lesson', 'letter', 'level', 'liar', 'liberty', 'library', 'license', 'life', 'lift', 'light', 'like', 'limb', 'limit', 'link', 'lion', 'liquid', 'list', 'little', 'live', 'lizard', 'load', 'loan', 'lobster', 'local', 'lock', 'logic', 'lonely', 'long', 'loop', 'lottery', 'loud', 'lounge', 'love', 'loyal', 'lucky', 'luggage', 'lumber', 'lunar', 'lunch', 'luxury', 'lyrics', 'machine', 'mad', 'magic', 'magnet', 'maid', 'mail', 'main', 'major', 'make', 'mammal', 'man', 'manage', 'mandate', 'mango', 'mansion', 'manual', 'maple', 'marble', 'march', 'margin', 'marine', 'market', 'marriage', 'mask', 'mass', 'master', 'match', 'material', 'math', 'matrix', 'matter', 'maximum', 'maze', 'meadow', 'mean', 'measure', 'meat', 'mechanic', 'medal', 'media', 'melody', 'melt', 'member', 'memory', 'mention', 'menu', 'mercy', 'merge', 'merit', 'merry', 'mesh', 'message', 'metal', 'method', 'middle', 'midnight', 'milk', 'million', 'mimic', 'mind', 'minimum', 'minor', 'minute', 'miracle', 'mirror', 'misery', 'miss', 'mistake', 'mix', 'mixed', 'mixture', 'mobile', 'model', 'modify', 'mom', 'moment', 'monitor', 'monkey', 'monster', 'month', 'moon', 'moral', 'more', 'morning', 'mosquito', 'mother', 'motion', 'motor', 'mountain', 'mouse', 'move', 'movie', 'much', 'muffin', 'mule', 'multiply', 'muscle', 'museum', 'mushroom', 'music', 'must', 'mutual', 'myself', 'mystery', 'myth', 'naive', 'name', 'napkin', 'narrow', 'nasty', 'nation', 'nature', 'near', 'neck', 'need', 'negative', 'neglect', 'neither', 'nephew', 'nerve', 'nest', 'net', 'network', 'neutral', 'never', 'news', 'next', 'nice', 'night', 'noble', 'noise', 'nominee', 'noodle', 'normal', 'north', 'nose', 'notable', 'note', 'nothing', 'notice', 'novel', 'now', 'nuclear', 'number', 'nurse', 'nut', 'oak', 'obey', 'object', 'oblige', 'obscure', 'observe', 'obtain', 'obvious', 'occur', 'ocean', 'october', 'odor', 'off', 'offer', 'office', 'often', 'oil', 'okay', 'old', 'olive', 'olympic', 'omit', 'once', 'one', 'onion', 'online', 'only', 'open', 'opera', 'opinion', 'oppose', 'option', 'orange', 'orbit', 'orchard', 'order', 'ordinary', 'organ', 'orient', 'original', 'orphan', 'ostrich', 'other', 'outdoor', 'outer', 'output', 'outside', 'oval', 'oven', 'over', 'own', 'owner', 'oxygen', 'oyster', 'ozone', 'pact', 'paddle', 'page', 'pair', 'palace', 'palm', 'panda', 'panel', 'panic', 'panther', 'paper', 'parade', 'parent', 'park', 'parrot', 'party', 'pass', 'patch', 'path', 'patient', 'patrol', 'pattern', 'pause', 'pave', 'payment', 'peace', 'peanut', 'pear', 'peasant', 'pelican', 'pen', 'penalty', 'pencil', 'people', 'pepper', 'perfect', 'permit', 'person', 'pet', 'phone', 'photo', 'phrase', 'physical', 'piano', 'picnic', 'picture', 'piece', 'pig', 'pigeon', 'pill', 'pilot', 'pink', 'pioneer', 'pipe', 'pistol', 'pitch', 'pizza', 'place', 'planet', 'plastic', 'plate', 'play', 'please', 'pledge', 'pluck', 'plug', 'plunge', 'poem', 'poet', 'point', 'polar', 'pole', 'police', 'pond', 'pony', 'pool', 'popular', 'portion', 'position', 'possible', 'post', 'potato', 'pottery', 'poverty', 'powder', 'power', 'practice', 'praise', 'predict', 'prefer', 'prepare', 'present', 'pretty', 'prevent', 'price', 'pride', 'primary', 'print', 'priority', 'prison', 'private', 'prize', 'problem', 'process', 'produce', 'profit', 'program', 'project', 'promote', 'proof', 'property', 'prosper', 'protect', 'proud', 'provide', 'public', 'pudding', 'pull', 'pulp', 'pulse', 'pumpkin', 'punch', 'pupil', 'puppy', 'purchase', 'purity', 'purpose', 'purse', 'push', 'put', 'puzzle', 'pyramid', 'quality', 'quantum', 'quarter', 'question', 'quick', 'quit', 'quiz', 'quote', 'rabbit', 'raccoon', 'race', 'rack', 'radar', 'radio', 'rail', 'rain', 'raise', 'rally', 'ramp', 'ranch', 'random', 'range', 'rapid', 'rare', 'rate', 'rather', 'raven', 'raw', 'razor', 'ready', 'real', 'reason', 'rebel', 'rebuild', 'recall', 'receive', 'recipe', 'record', 'recycle', 'reduce', 'reflect', 'reform', 'refuse', 'region', 'regret', 'regular', 'reject', 'relax', 'release', 'relief', 'rely', 'remain', 'remember', 'remind', 'remove', 'render', 'renew', 'rent', 'reopen', 'repair', 'repeat', 'replace', 'report', 'require', 'rescue', 'resemble', 'resist', 'resource', 'response', 'result', 'retire', 'retreat', 'return', 'reunion', 'reveal', 'review', 'reward', 'rhythm', 'rib', 'ribbon', 'rice', 'rich', 'ride', 'ridge', 'rifle', 'right', 'rigid', 'ring', 'riot', 'ripple', 'risk', 'ritual', 'rival', 'river', 'road', 'roast', 'robot', 'robust', 'rocket', 'romance', 'roof', 'rookie', 'room', 'rose', 'rotate', 'rough', 'round', 'route', 'royal', 'rubber', 'rude', 'rug', 'rule', 'run', 'runway', 'rural', 'sad', 'saddle', 'sadness', 'safe', 'sail', 'salad', 'salmon', 'salon', 'salt', 'salute', 'same', 'sample', 'sand', 'satisfy', 'satoshi', 'sauce', 'sausage', 'save', 'say', 'scale', 'scan', 'scare', 'scatter', 'scene', 'scheme', 'school', 'science', 'scissors', 'scorpion', 'scout', 'scrap', 'screen', 'script', 'scrub', 'sea', 'search', 'season', 'seat', 'second', 'secret', 'section', 'security', 'seed', 'seek', 'segment', 'select', 'sell', 'seminar', 'senior', 'sense', 'sentence', 'series', 'service', 'session', 'settle', 'setup', 'seven', 'shadow', 'shaft', 'shallow', 'share', 'shed', 'shell', 'sheriff', 'shield', 'shift', 'shine', 'ship', 'shiver', 'shock', 'shoe', 'shoot', 'shop', 'short', 'shoulder', 'shove', 'shrimp', 'shrug', 'shuffle', 'shy', 'sibling', 'sick', 'side', 'siege', 'sight', 'sign', 'silent', 'silk', 'silly', 'silver', 'similar', 'simple', 'since', 'sing', 'siren', 'sister', 'situate', 'six', 'size', 'skate', 'sketch', 'ski', 'skill', 'skin', 'skirt', 'skull', 'slab', 'slam', 'sleep', 'slender', 'slice', 'slide', 'slight', 'slim', 'slogan', 'slot', 'slow', 'slush', 'small', 'smart', 'smile', 'smoke', 'smooth', 'snack', 'snake', 'snap', 'sniff', 'snow', 'soap', 'soccer', 'social', 'sock', 'soda', 'soft', 'solar', 'soldier', 'solid', 'solution', 'solve', 'someone', 'song', 'soon', 'sorry', 'sort', 'soul', 'sound', 'soup', 'source', 'south', 'space', 'spare', 'spatial', 'spawn', 'speak', 'special', 'speed', 'spell', 'spend', 'sphere', 'spice', 'spider', 'spike', 'spin', 'spirit', 'split', 'spoil', 'sponsor', 'spoon', 'sport', 'spot', 'spray', 'spread', 'spring', 'spy', 'square', 'squeeze', 'squirrel', 'stable', 'stadium', 'staff', 'stage', 'stairs', 'stamp', 'stand', 'start', 'state', 'stay', 'steak', 'steel', 'stem', 'step', 'stereo', 'stick', 'still', 'sting', 'stock', 'stomach', 'stone', 'stool', 'story', 'stove', 'strategy', 'street', 'strike', 'strong', 'struggle', 'student', 'stuff', 'stumble', 'style', 'subject', 'submit', 'subway', 'success', 'such', 'sudden', 'suffer', 'sugar', 'suggest', 'suit', 'summer', 'sun', 'sunny', 'sunset', 'super', 'supply', 'supreme', 'sure', 'surface', 'surge', 'surprise', 'surround', 'survey', 'suspect', 'sustain', 'swallow', 'swamp', 'swap', 'swarm', 'swear', 'sweet', 'swift', 'swim', 'swing', 'switch', 'sword', 'symbol', 'symptom', 'syrup', 'system', 'table', 'tackle', 'tag', 'tail', 'talent', 'talk', 'tank', 'tape', 'target', 'task', 'taste', 'tattoo', 'taxi', 'teach', 'team', 'tell', 'ten', 'tenant', 'tennis', 'tent', 'term', 'test', 'text', 'thank', 'that', 'theme', 'then', 'theory', 'there', 'they', 'thing', 'this', 'thought', 'three', 'thrive', 'throw', 'thumb', 'thunder', 'ticket', 'tide', 'tiger', 'tilt', 'timber', 'time', 'tiny', 'tip', 'tired', 'tissue', 'title', 'toast', 'tobacco', 'today', 'toddler', 'toe', 'together', 'toilet', 'token', 'tomato', 'tomorrow', 'tone', 'tongue', 'tonight', 'tool', 'tooth', 'top', 'topic', 'topple', 'torch', 'tornado', 'tortoise', 'toss', 'total', 'tourist', 'toward', 'tower', 'town', 'toy', 'track', 'trade', 'traffic', 'tragic', 'train', 'transfer', 'trap', 'trash', 'travel', 'tray', 'treat', 'tree', 'trend', 'trial', 'tribe', 'trick', 'trigger', 'trim', 'trip', 'trophy', 'trouble', 'truck', 'true', 'truly', 'trumpet', 'trust', 'truth', 'try', 'tube', 'tuition', 'tumble', 'tuna', 'tunnel', 'turkey', 'turn', 'turtle', 'twelve', 'twenty', 'twice', 'twin', 'twist', 'two', 'type', 'typical', 'ugly', 'umbrella', 'unable', 'unaware', 'uncle', 'uncover', 'under', 'undo', 'unfair', 'unfold', 'unhappy', 'uniform', 'unique', 'unit', 'universe', 'unknown', 'unlock', 'until', 'unusual', 'unveil', 'update', 'upgrade', 'uphold', 'upon', 'upper', 'upset', 'urban', 'urge', 'usage', 'use', 'used', 'useful', 'useless', 'usual', 'utility', 'vacant', 'vacuum', 'vague', 'valid', 'valley', 'valve', 'van', 'vanish', 'vapor', 'various', 'vast', 'vault', 'vehicle', 'velvet', 'vendor', 'venture', 'venue', 'verb', 'verify', 'version', 'very', 'vessel', 'veteran', 'viable', 'vibrant', 'vicious', 'victory', 'video', 'view', 'village', 'vintage', 'violin', 'virtual', 'virus', 'visa', 'visit', 'visual', 'vital', 'vivid', 'vocal', 'voice', 'void', 'volcano', 'volume', 'vote', 'voyage', 'wage', 'wagon', 'wait', 'walk', 'wall', 'walnut', 'want', 'warfare', 'warm', 'warrior', 'wash', 'wasp', 'waste', 'water', 'wave', 'way', 'wealth', 'weapon', 'wear', 'weasel', 'weather', 'web', 'wedding', 'weekend', 'weird', 'welcome', 'west', 'wet', 'whale', 'what', 'wheat', 'wheel', 'when', 'where', 'whip', 'whisper', 'wide', 'width', 'wife', 'wild', 'will', 'win', 'window', 'wine', 'wing', 'wink', 'winner', 'winter', 'wire', 'wisdom', 'wise', 'wish', 'witness', 'wolf', 'woman', 'wonder', 'wood', 'wool', 'word', 'work', 'world', 'worry', 'worth', 'wrap', 'wreck', 'wrestle', 'wrist', 'write', 'wrong', 'yard', 'year', 'yellow', 'you', 'young', 'youth', 'zebra', 'zero', 'zone', 'zoo'];
 
 module.exports = english;
-},{}],144:[function(require,module,exports){
+},{}],148:[function(require,module,exports){
 'use string';
 
 var french = ['abaisser', 'abandon', 'abdiquer', 'abeille', 'abolir', 'aborder', 'aboutir', 'aboyer', 'abrasif', 'abreuver', 'abriter', 'abroger', 'abrupt', 'absence', 'absolu', 'absurde', 'abusif', 'abyssal', 'académie', 'acajou', 'acarien', 'accabler', 'accepter', 'acclamer', 'accolade', 'accroche', 'accuser', 'acerbe', 'achat', 'acheter', 'aciduler', 'acier', 'acompte', 'acquérir', 'acronyme', 'acteur', 'actif', 'actuel', 'adepte', 'adéquat', 'adhésif', 'adjectif', 'adjuger', 'admettre', 'admirer', 'adopter', 'adorer', 'adoucir', 'adresse', 'adroit', 'adulte', 'adverbe', 'aérer', 'aéronef', 'affaire', 'affecter', 'affiche', 'affreux', 'affubler', 'agacer', 'agencer', 'agile', 'agiter', 'agrafer', 'agréable', 'agrume', 'aider', 'aiguille', 'ailier', 'aimable', 'aisance', 'ajouter', 'ajuster', 'alarmer', 'alchimie', 'alerte', 'algèbre', 'algue', 'aliéner', 'aliment', 'alléger', 'alliage', 'allouer', 'allumer', 'alourdir', 'alpaga', 'altesse', 'alvéole', 'amateur', 'ambigu', 'ambre', 'aménager', 'amertume', 'amidon', 'amiral', 'amorcer', 'amour', 'amovible', 'amphibie', 'ampleur', 'amusant', 'analyse', 'anaphore', 'anarchie', 'anatomie', 'ancien', 'anéantir', 'angle', 'angoisse', 'anguleux', 'animal', 'annexer', 'annonce', 'annuel', 'anodin', 'anomalie', 'anonyme', 'anormal', 'antenne', 'antidote', 'anxieux', 'apaiser', 'apéritif', 'aplanir', 'apologie', 'appareil', 'appeler', 'apporter', 'appuyer', 'aquarium', 'aqueduc', 'arbitre', 'arbuste', 'ardeur', 'ardoise', 'argent', 'arlequin', 'armature', 'armement', 'armoire', 'armure', 'arpenter', 'arracher', 'arriver', 'arroser', 'arsenic', 'artériel', 'article', 'aspect', 'asphalte', 'aspirer', 'assaut', 'asservir', 'assiette', 'associer', 'assurer', 'asticot', 'astre', 'astuce', 'atelier', 'atome', 'atrium', 'atroce', 'attaque', 'attentif', 'attirer', 'attraper', 'aubaine', 'auberge', 'audace', 'audible', 'augurer', 'aurore', 'automne', 'autruche', 'avaler', 'avancer', 'avarice', 'avenir', 'averse', 'aveugle', 'aviateur', 'avide', 'avion', 'aviser', 'avoine', 'avouer', 'avril', 'axial', 'axiome', 'badge', 'bafouer', 'bagage', 'baguette', 'baignade', 'balancer', 'balcon', 'baleine', 'balisage', 'bambin', 'bancaire', 'bandage', 'banlieue', 'bannière', 'banquier', 'barbier', 'baril', 'baron', 'barque', 'barrage', 'bassin', 'bastion', 'bataille', 'bateau', 'batterie', 'baudrier', 'bavarder', 'belette', 'bélier', 'belote', 'bénéfice', 'berceau', 'berger', 'berline', 'bermuda', 'besace', 'besogne', 'bétail', 'beurre', 'biberon', 'bicycle', 'bidule', 'bijou', 'bilan', 'bilingue', 'billard', 'binaire', 'biologie', 'biopsie', 'biotype', 'biscuit', 'bison', 'bistouri', 'bitume', 'bizarre', 'blafard', 'blague', 'blanchir', 'blessant', 'blinder', 'blond', 'bloquer', 'blouson', 'bobard', 'bobine', 'boire', 'boiser', 'bolide', 'bonbon', 'bondir', 'bonheur', 'bonifier', 'bonus', 'bordure', 'borne', 'botte', 'boucle', 'boueux', 'bougie', 'boulon', 'bouquin', 'bourse', 'boussole', 'boutique', 'boxeur', 'branche', 'brasier', 'brave', 'brebis', 'brèche', 'breuvage', 'bricoler', 'brigade', 'brillant', 'brioche', 'brique', 'brochure', 'broder', 'bronzer', 'brousse', 'broyeur', 'brume', 'brusque', 'brutal', 'bruyant', 'buffle', 'buisson', 'bulletin', 'bureau', 'burin', 'bustier', 'butiner', 'butoir', 'buvable', 'buvette', 'cabanon', 'cabine', 'cachette', 'cadeau', 'cadre', 'caféine', 'caillou', 'caisson', 'calculer', 'calepin', 'calibre', 'calmer', 'calomnie', 'calvaire', 'camarade', 'caméra', 'camion', 'campagne', 'canal', 'caneton', 'canon', 'cantine', 'canular', 'capable', 'caporal', 'caprice', 'capsule', 'capter', 'capuche', 'carabine', 'carbone', 'caresser', 'caribou', 'carnage', 'carotte', 'carreau', 'carton', 'cascade', 'casier', 'casque', 'cassure', 'causer', 'caution', 'cavalier', 'caverne', 'caviar', 'cédille', 'ceinture', 'céleste', 'cellule', 'cendrier', 'censurer', 'central', 'cercle', 'cérébral', 'cerise', 'cerner', 'cerveau', 'cesser', 'chagrin', 'chaise', 'chaleur', 'chambre', 'chance', 'chapitre', 'charbon', 'chasseur', 'chaton', 'chausson', 'chavirer', 'chemise', 'chenille', 'chéquier', 'chercher', 'cheval', 'chien', 'chiffre', 'chignon', 'chimère', 'chiot', 'chlorure', 'chocolat', 'choisir', 'chose', 'chouette', 'chrome', 'chute', 'cigare', 'cigogne', 'cimenter', 'cinéma', 'cintrer', 'circuler', 'cirer', 'cirque', 'citerne', 'citoyen', 'citron', 'civil', 'clairon', 'clameur', 'claquer', 'classe', 'clavier', 'client', 'cligner', 'climat', 'clivage', 'cloche', 'clonage', 'cloporte', 'cobalt', 'cobra', 'cocasse', 'cocotier', 'coder', 'codifier', 'coffre', 'cogner', 'cohésion', 'coiffer', 'coincer', 'colère', 'colibri', 'colline', 'colmater', 'colonel', 'combat', 'comédie', 'commande', 'compact', 'concert', 'conduire', 'confier', 'congeler', 'connoter', 'consonne', 'contact', 'convexe', 'copain', 'copie', 'corail', 'corbeau', 'cordage', 'corniche', 'corpus', 'correct', 'cortège', 'cosmique', 'costume', 'coton', 'coude', 'coupure', 'courage', 'couteau', 'couvrir', 'coyote', 'crabe', 'crainte', 'cravate', 'crayon', 'créature', 'créditer', 'crémeux', 'creuser', 'crevette', 'cribler', 'crier', 'cristal', 'critère', 'croire', 'croquer', 'crotale', 'crucial', 'cruel', 'crypter', 'cubique', 'cueillir', 'cuillère', 'cuisine', 'cuivre', 'culminer', 'cultiver', 'cumuler', 'cupide', 'curatif', 'curseur', 'cyanure', 'cycle', 'cylindre', 'cynique', 'daigner', 'damier', 'danger', 'danseur', 'dauphin', 'débattre', 'débiter', 'déborder', 'débrider', 'débutant', 'décaler', 'décembre', 'déchirer', 'décider', 'déclarer', 'décorer', 'décrire', 'décupler', 'dédale', 'déductif', 'déesse', 'défensif', 'défiler', 'défrayer', 'dégager', 'dégivrer', 'déglutir', 'dégrafer', 'déjeuner', 'délice', 'déloger', 'demander', 'demeurer', 'démolir', 'dénicher', 'dénouer', 'dentelle', 'dénuder', 'départ', 'dépenser', 'déphaser', 'déplacer', 'déposer', 'déranger', 'dérober', 'désastre', 'descente', 'désert', 'désigner', 'désobéir', 'dessiner', 'destrier', 'détacher', 'détester', 'détourer', 'détresse', 'devancer', 'devenir', 'deviner', 'devoir', 'diable', 'dialogue', 'diamant', 'dicter', 'différer', 'digérer', 'digital', 'digne', 'diluer', 'dimanche', 'diminuer', 'dioxyde', 'directif', 'diriger', 'discuter', 'disposer', 'dissiper', 'distance', 'divertir', 'diviser', 'docile', 'docteur', 'dogme', 'doigt', 'domaine', 'domicile', 'dompter', 'donateur', 'donjon', 'donner', 'dopamine', 'dortoir', 'dorure', 'dosage', 'doseur', 'dossier', 'dotation', 'douanier', 'double', 'douceur', 'douter', 'doyen', 'dragon', 'draper', 'dresser', 'dribbler', 'droiture', 'duperie', 'duplexe', 'durable', 'durcir', 'dynastie', 'éblouir', 'écarter', 'écharpe', 'échelle', 'éclairer', 'éclipse', 'éclore', 'écluse', 'école', 'économie', 'écorce', 'écouter', 'écraser', 'écrémer', 'écrivain', 'écrou', 'écume', 'écureuil', 'édifier', 'éduquer', 'effacer', 'effectif', 'effigie', 'effort', 'effrayer', 'effusion', 'égaliser', 'égarer', 'éjecter', 'élaborer', 'élargir', 'électron', 'élégant', 'éléphant', 'élève', 'éligible', 'élitisme', 'éloge', 'élucider', 'éluder', 'emballer', 'embellir', 'embryon', 'émeraude', 'émission', 'emmener', 'émotion', 'émouvoir', 'empereur', 'employer', 'emporter', 'emprise', 'émulsion', 'encadrer', 'enchère', 'enclave', 'encoche', 'endiguer', 'endosser', 'endroit', 'enduire', 'énergie', 'enfance', 'enfermer', 'enfouir', 'engager', 'engin', 'englober', 'énigme', 'enjamber', 'enjeu', 'enlever', 'ennemi', 'ennuyeux', 'enrichir', 'enrobage', 'enseigne', 'entasser', 'entendre', 'entier', 'entourer', 'entraver', 'énumérer', 'envahir', 'enviable', 'envoyer', 'enzyme', 'éolien', 'épaissir', 'épargne', 'épatant', 'épaule', 'épicerie', 'épidémie', 'épier', 'épilogue', 'épine', 'épisode', 'épitaphe', 'époque', 'épreuve', 'éprouver', 'épuisant', 'équerre', 'équipe', 'ériger', 'érosion', 'erreur', 'éruption', 'escalier', 'espadon', 'espèce', 'espiègle', 'espoir', 'esprit', 'esquiver', 'essayer', 'essence', 'essieu', 'essorer', 'estime', 'estomac', 'estrade', 'étagère', 'étaler', 'étanche', 'étatique', 'éteindre', 'étendoir', 'éternel', 'éthanol', 'éthique', 'ethnie', 'étirer', 'étoffer', 'étoile', 'étonnant', 'étourdir', 'étrange', 'étroit', 'étude', 'euphorie', 'évaluer', 'évasion', 'éventail', 'évidence', 'éviter', 'évolutif', 'évoquer', 'exact', 'exagérer', 'exaucer', 'exceller', 'excitant', 'exclusif', 'excuse', 'exécuter', 'exemple', 'exercer', 'exhaler', 'exhorter', 'exigence', 'exiler', 'exister', 'exotique', 'expédier', 'explorer', 'exposer', 'exprimer', 'exquis', 'extensif', 'extraire', 'exulter', 'fable', 'fabuleux', 'facette', 'facile', 'facture', 'faiblir', 'falaise', 'fameux', 'famille', 'farceur', 'farfelu', 'farine', 'farouche', 'fasciner', 'fatal', 'fatigue', 'faucon', 'fautif', 'faveur', 'favori', 'fébrile', 'féconder', 'fédérer', 'félin', 'femme', 'fémur', 'fendoir', 'féodal', 'fermer', 'féroce', 'ferveur', 'festival', 'feuille', 'feutre', 'février', 'fiasco', 'ficeler', 'fictif', 'fidèle', 'figure', 'filature', 'filetage', 'filière', 'filleul', 'filmer', 'filou', 'filtrer', 'financer', 'finir', 'fiole', 'firme', 'fissure', 'fixer', 'flairer', 'flamme', 'flasque', 'flatteur', 'fléau', 'flèche', 'fleur', 'flexion', 'flocon', 'flore', 'fluctuer', 'fluide', 'fluvial', 'folie', 'fonderie', 'fongible', 'fontaine', 'forcer', 'forgeron', 'formuler', 'fortune', 'fossile', 'foudre', 'fougère', 'fouiller', 'foulure', 'fourmi', 'fragile', 'fraise', 'franchir', 'frapper', 'frayeur', 'frégate', 'freiner', 'frelon', 'frémir', 'frénésie', 'frère', 'friable', 'friction', 'frisson', 'frivole', 'froid', 'fromage', 'frontal', 'frotter', 'fruit', 'fugitif', 'fuite', 'fureur', 'furieux', 'furtif', 'fusion', 'futur', 'gagner', 'galaxie', 'galerie', 'gambader', 'garantir', 'gardien', 'garnir', 'garrigue', 'gazelle', 'gazon', 'géant', 'gélatine', 'gélule', 'gendarme', 'général', 'génie', 'genou', 'gentil', 'géologie', 'géomètre', 'géranium', 'germe', 'gestuel', 'geyser', 'gibier', 'gicler', 'girafe', 'givre', 'glace', 'glaive', 'glisser', 'globe', 'gloire', 'glorieux', 'golfeur', 'gomme', 'gonfler', 'gorge', 'gorille', 'goudron', 'gouffre', 'goulot', 'goupille', 'gourmand', 'goutte', 'graduel', 'graffiti', 'graine', 'grand', 'grappin', 'gratuit', 'gravir', 'grenat', 'griffure', 'griller', 'grimper', 'grogner', 'gronder', 'grotte', 'groupe', 'gruger', 'grutier', 'gruyère', 'guépard', 'guerrier', 'guide', 'guimauve', 'guitare', 'gustatif', 'gymnaste', 'gyrostat', 'habitude', 'hachoir', 'halte', 'hameau', 'hangar', 'hanneton', 'haricot', 'harmonie', 'harpon', 'hasard', 'hélium', 'hématome', 'herbe', 'hérisson', 'hermine', 'héron', 'hésiter', 'heureux', 'hiberner', 'hibou', 'hilarant', 'histoire', 'hiver', 'homard', 'hommage', 'homogène', 'honneur', 'honorer', 'honteux', 'horde', 'horizon', 'horloge', 'hormone', 'horrible', 'houleux', 'housse', 'hublot', 'huileux', 'humain', 'humble', 'humide', 'humour', 'hurler', 'hydromel', 'hygiène', 'hymne', 'hypnose', 'idylle', 'ignorer', 'iguane', 'illicite', 'illusion', 'image', 'imbiber', 'imiter', 'immense', 'immobile', 'immuable', 'impact', 'impérial', 'implorer', 'imposer', 'imprimer', 'imputer', 'incarner', 'incendie', 'incident', 'incliner', 'incolore', 'indexer', 'indice', 'inductif', 'inédit', 'ineptie', 'inexact', 'infini', 'infliger', 'informer', 'infusion', 'ingérer', 'inhaler', 'inhiber', 'injecter', 'injure', 'innocent', 'inoculer', 'inonder', 'inscrire', 'insecte', 'insigne', 'insolite', 'inspirer', 'instinct', 'insulter', 'intact', 'intense', 'intime', 'intrigue', 'intuitif', 'inutile', 'invasion', 'inventer', 'inviter', 'invoquer', 'ironique', 'irradier', 'irréel', 'irriter', 'isoler', 'ivoire', 'ivresse', 'jaguar', 'jaillir', 'jambe', 'janvier', 'jardin', 'jauger', 'jaune', 'javelot', 'jetable', 'jeton', 'jeudi', 'jeunesse', 'joindre', 'joncher', 'jongler', 'joueur', 'jouissif', 'journal', 'jovial', 'joyau', 'joyeux', 'jubiler', 'jugement', 'junior', 'jupon', 'juriste', 'justice', 'juteux', 'juvénile', 'kayak', 'kimono', 'kiosque', 'label', 'labial', 'labourer', 'lacérer', 'lactose', 'lagune', 'laine', 'laisser', 'laitier', 'lambeau', 'lamelle', 'lampe', 'lanceur', 'langage', 'lanterne', 'lapin', 'largeur', 'larme', 'laurier', 'lavabo', 'lavoir', 'lecture', 'légal', 'léger', 'légume', 'lessive', 'lettre', 'levier', 'lexique', 'lézard', 'liasse', 'libérer', 'libre', 'licence', 'licorne', 'liège', 'lièvre', 'ligature', 'ligoter', 'ligue', 'limer', 'limite', 'limonade', 'limpide', 'linéaire', 'lingot', 'lionceau', 'liquide', 'lisière', 'lister', 'lithium', 'litige', 'littoral', 'livreur', 'logique', 'lointain', 'loisir', 'lombric', 'loterie', 'louer', 'lourd', 'loutre', 'louve', 'loyal', 'lubie', 'lucide', 'lucratif', 'lueur', 'lugubre', 'luisant', 'lumière', 'lunaire', 'lundi', 'luron', 'lutter', 'luxueux', 'machine', 'magasin', 'magenta', 'magique', 'maigre', 'maillon', 'maintien', 'mairie', 'maison', 'majorer', 'malaxer', 'maléfice', 'malheur', 'malice', 'mallette', 'mammouth', 'mandater', 'maniable', 'manquant', 'manteau', 'manuel', 'marathon', 'marbre', 'marchand', 'mardi', 'maritime', 'marqueur', 'marron', 'marteler', 'mascotte', 'massif', 'matériel', 'matière', 'matraque', 'maudire', 'maussade', 'mauve', 'maximal', 'méchant', 'méconnu', 'médaille', 'médecin', 'méditer', 'méduse', 'meilleur', 'mélange', 'mélodie', 'membre', 'mémoire', 'menacer', 'mener', 'menhir', 'mensonge', 'mentor', 'mercredi', 'mérite', 'merle', 'messager', 'mesure', 'métal', 'météore', 'méthode', 'métier', 'meuble', 'miauler', 'microbe', 'miette', 'mignon', 'migrer', 'milieu', 'million', 'mimique', 'mince', 'minéral', 'minimal', 'minorer', 'minute', 'miracle', 'miroiter', 'missile', 'mixte', 'mobile', 'moderne', 'moelleux', 'mondial', 'moniteur', 'monnaie', 'monotone', 'monstre', 'montagne', 'monument', 'moqueur', 'morceau', 'morsure', 'mortier', 'moteur', 'motif', 'mouche', 'moufle', 'moulin', 'mousson', 'mouton', 'mouvant', 'multiple', 'munition', 'muraille', 'murène', 'murmure', 'muscle', 'muséum', 'musicien', 'mutation', 'muter', 'mutuel', 'myriade', 'myrtille', 'mystère', 'mythique', 'nageur', 'nappe', 'narquois', 'narrer', 'natation', 'nation', 'nature', 'naufrage', 'nautique', 'navire', 'nébuleux', 'nectar', 'néfaste', 'négation', 'négliger', 'négocier', 'neige', 'nerveux', 'nettoyer', 'neurone', 'neutron', 'neveu', 'niche', 'nickel', 'nitrate', 'niveau', 'noble', 'nocif', 'nocturne', 'noirceur', 'noisette', 'nomade', 'nombreux', 'nommer', 'normatif', 'notable', 'notifier', 'notoire', 'nourrir', 'nouveau', 'novateur', 'novembre', 'novice', 'nuage', 'nuancer', 'nuire', 'nuisible', 'numéro', 'nuptial', 'nuque', 'nutritif', 'obéir', 'objectif', 'obliger', 'obscur', 'observer', 'obstacle', 'obtenir', 'obturer', 'occasion', 'occuper', 'océan', 'octobre', 'octroyer', 'octupler', 'oculaire', 'odeur', 'odorant', 'offenser', 'officier', 'offrir', 'ogive', 'oiseau', 'oisillon', 'olfactif', 'olivier', 'ombrage', 'omettre', 'onctueux', 'onduler', 'onéreux', 'onirique', 'opale', 'opaque', 'opérer', 'opinion', 'opportun', 'opprimer', 'opter', 'optique', 'orageux', 'orange', 'orbite', 'ordonner', 'oreille', 'organe', 'orgueil', 'orifice', 'ornement', 'orque', 'ortie', 'osciller', 'osmose', 'ossature', 'otarie', 'ouragan', 'ourson', 'outil', 'outrager', 'ouvrage', 'ovation', 'oxyde', 'oxygène', 'ozone', 'paisible', 'palace', 'palmarès', 'palourde', 'palper', 'panache', 'panda', 'pangolin', 'paniquer', 'panneau', 'panorama', 'pantalon', 'papaye', 'papier', 'papoter', 'papyrus', 'paradoxe', 'parcelle', 'paresse', 'parfumer', 'parler', 'parole', 'parrain', 'parsemer', 'partager', 'parure', 'parvenir', 'passion', 'pastèque', 'paternel', 'patience', 'patron', 'pavillon', 'pavoiser', 'payer', 'paysage', 'peigne', 'peintre', 'pelage', 'pélican', 'pelle', 'pelouse', 'peluche', 'pendule', 'pénétrer', 'pénible', 'pensif', 'pénurie', 'pépite', 'péplum', 'perdrix', 'perforer', 'période', 'permuter', 'perplexe', 'persil', 'perte', 'peser', 'pétale', 'petit', 'pétrir', 'peuple', 'pharaon', 'phobie', 'phoque', 'photon', 'phrase', 'physique', 'piano', 'pictural', 'pièce', 'pierre', 'pieuvre', 'pilote', 'pinceau', 'pipette', 'piquer', 'pirogue', 'piscine', 'piston', 'pivoter', 'pixel', 'pizza', 'placard', 'plafond', 'plaisir', 'planer', 'plaque', 'plastron', 'plateau', 'pleurer', 'plexus', 'pliage', 'plomb', 'plonger', 'pluie', 'plumage', 'pochette', 'poésie', 'poète', 'pointe', 'poirier', 'poisson', 'poivre', 'polaire', 'policier', 'pollen', 'polygone', 'pommade', 'pompier', 'ponctuel', 'pondérer', 'poney', 'portique', 'position', 'posséder', 'posture', 'potager', 'poteau', 'potion', 'pouce', 'poulain', 'poumon', 'pourpre', 'poussin', 'pouvoir', 'prairie', 'pratique', 'précieux', 'prédire', 'préfixe', 'prélude', 'prénom', 'présence', 'prétexte', 'prévoir', 'primitif', 'prince', 'prison', 'priver', 'problème', 'procéder', 'prodige', 'profond', 'progrès', 'proie', 'projeter', 'prologue', 'promener', 'propre', 'prospère', 'protéger', 'prouesse', 'proverbe', 'prudence', 'pruneau', 'psychose', 'public', 'puceron', 'puiser', 'pulpe', 'pulsar', 'punaise', 'punitif', 'pupitre', 'purifier', 'puzzle', 'pyramide', 'quasar', 'querelle', 'question', 'quiétude', 'quitter', 'quotient', 'racine', 'raconter', 'radieux', 'ragondin', 'raideur', 'raisin', 'ralentir', 'rallonge', 'ramasser', 'rapide', 'rasage', 'ratisser', 'ravager', 'ravin', 'rayonner', 'réactif', 'réagir', 'réaliser', 'réanimer', 'recevoir', 'réciter', 'réclamer', 'récolter', 'recruter', 'reculer', 'recycler', 'rédiger', 'redouter', 'refaire', 'réflexe', 'réformer', 'refrain', 'refuge', 'régalien', 'région', 'réglage', 'régulier', 'réitérer', 'rejeter', 'rejouer', 'relatif', 'relever', 'relief', 'remarque', 'remède', 'remise', 'remonter', 'remplir', 'remuer', 'renard', 'renfort', 'renifler', 'renoncer', 'rentrer', 'renvoi', 'replier', 'reporter', 'reprise', 'reptile', 'requin', 'réserve', 'résineux', 'résoudre', 'respect', 'rester', 'résultat', 'rétablir', 'retenir', 'réticule', 'retomber', 'retracer', 'réunion', 'réussir', 'revanche', 'revivre', 'révolte', 'révulsif', 'richesse', 'rideau', 'rieur', 'rigide', 'rigoler', 'rincer', 'riposter', 'risible', 'risque', 'rituel', 'rival', 'rivière', 'rocheux', 'romance', 'rompre', 'ronce', 'rondin', 'roseau', 'rosier', 'rotatif', 'rotor', 'rotule', 'rouge', 'rouille', 'rouleau', 'routine', 'royaume', 'ruban', 'rubis', 'ruche', 'ruelle', 'rugueux', 'ruiner', 'ruisseau', 'ruser', 'rustique', 'rythme', 'sabler', 'saboter', 'sabre', 'sacoche', 'safari', 'sagesse', 'saisir', 'salade', 'salive', 'salon', 'saluer', 'samedi', 'sanction', 'sanglier', 'sarcasme', 'sardine', 'saturer', 'saugrenu', 'saumon', 'sauter', 'sauvage', 'savant', 'savonner', 'scalpel', 'scandale', 'scélérat', 'scénario', 'sceptre', 'schéma', 'science', 'scinder', 'score', 'scrutin', 'sculpter', 'séance', 'sécable', 'sécher', 'secouer', 'sécréter', 'sédatif', 'séduire', 'seigneur', 'séjour', 'sélectif', 'semaine', 'sembler', 'semence', 'séminal', 'sénateur', 'sensible', 'sentence', 'séparer', 'séquence', 'serein', 'sergent', 'sérieux', 'serrure', 'sérum', 'service', 'sésame', 'sévir', 'sevrage', 'sextuple', 'sidéral', 'siècle', 'siéger', 'siffler', 'sigle', 'signal', 'silence', 'silicium', 'simple', 'sincère', 'sinistre', 'siphon', 'sirop', 'sismique', 'situer', 'skier', 'social', 'socle', 'sodium', 'soigneux', 'soldat', 'soleil', 'solitude', 'soluble', 'sombre', 'sommeil', 'somnoler', 'sonde', 'songeur', 'sonnette', 'sonore', 'sorcier', 'sortir', 'sosie', 'sottise', 'soucieux', 'soudure', 'souffle', 'soulever', 'soupape', 'source', 'soutirer', 'souvenir', 'spacieux', 'spatial', 'spécial', 'sphère', 'spiral', 'stable', 'station', 'sternum', 'stimulus', 'stipuler', 'strict', 'studieux', 'stupeur', 'styliste', 'sublime', 'substrat', 'subtil', 'subvenir', 'succès', 'sucre', 'suffixe', 'suggérer', 'suiveur', 'sulfate', 'superbe', 'supplier', 'surface', 'suricate', 'surmener', 'surprise', 'sursaut', 'survie', 'suspect', 'syllabe', 'symbole', 'symétrie', 'synapse', 'syntaxe', 'système', 'tabac', 'tablier', 'tactile', 'tailler', 'talent', 'talisman', 'talonner', 'tambour', 'tamiser', 'tangible', 'tapis', 'taquiner', 'tarder', 'tarif', 'tartine', 'tasse', 'tatami', 'tatouage', 'taupe', 'taureau', 'taxer', 'témoin', 'temporel', 'tenaille', 'tendre', 'teneur', 'tenir', 'tension', 'terminer', 'terne', 'terrible', 'tétine', 'texte', 'thème', 'théorie', 'thérapie', 'thorax', 'tibia', 'tiède', 'timide', 'tirelire', 'tiroir', 'tissu', 'titane', 'titre', 'tituber', 'toboggan', 'tolérant', 'tomate', 'tonique', 'tonneau', 'toponyme', 'torche', 'tordre', 'tornade', 'torpille', 'torrent', 'torse', 'tortue', 'totem', 'toucher', 'tournage', 'tousser', 'toxine', 'traction', 'trafic', 'tragique', 'trahir', 'train', 'trancher', 'travail', 'trèfle', 'tremper', 'trésor', 'treuil', 'triage', 'tribunal', 'tricoter', 'trilogie', 'triomphe', 'tripler', 'triturer', 'trivial', 'trombone', 'tronc', 'tropical', 'troupeau', 'tuile', 'tulipe', 'tumulte', 'tunnel', 'turbine', 'tuteur', 'tutoyer', 'tuyau', 'tympan', 'typhon', 'typique', 'tyran', 'ubuesque', 'ultime', 'ultrason', 'unanime', 'unifier', 'union', 'unique', 'unitaire', 'univers', 'uranium', 'urbain', 'urticant', 'usage', 'usine', 'usuel', 'usure', 'utile', 'utopie', 'vacarme', 'vaccin', 'vagabond', 'vague', 'vaillant', 'vaincre', 'vaisseau', 'valable', 'valise', 'vallon', 'valve', 'vampire', 'vanille', 'vapeur', 'varier', 'vaseux', 'vassal', 'vaste', 'vecteur', 'vedette', 'végétal', 'véhicule', 'veinard', 'véloce', 'vendredi', 'vénérer', 'venger', 'venimeux', 'ventouse', 'verdure', 'vérin', 'vernir', 'verrou', 'verser', 'vertu', 'veston', 'vétéran', 'vétuste', 'vexant', 'vexer', 'viaduc', 'viande', 'victoire', 'vidange', 'vidéo', 'vignette', 'vigueur', 'vilain', 'village', 'vinaigre', 'violon', 'vipère', 'virement', 'virtuose', 'virus', 'visage', 'viseur', 'vision', 'visqueux', 'visuel', 'vital', 'vitesse', 'viticole', 'vitrine', 'vivace', 'vivipare', 'vocation', 'voguer', 'voile', 'voisin', 'voiture', 'volaille', 'volcan', 'voltiger', 'volume', 'vorace', 'vortex', 'voter', 'vouloir', 'voyage', 'voyelle', 'wagon', 'xénon', 'yacht', 'zèbre', 'zénith', 'zeste', 'zoologie'];
 
 module.exports = french;
-},{}],145:[function(require,module,exports){
+},{}],149:[function(require,module,exports){
 module.exports = {
   'CHINESE': require('./chinese'),
   'ENGLISH': require('./english'),
@@ -28906,21 +29281,21 @@ module.exports = {
   'SPANISH': require('./spanish')
 };
 
-},{"./chinese":142,"./english":143,"./french":144,"./japanese":146,"./spanish":147}],146:[function(require,module,exports){
+},{"./chinese":146,"./english":147,"./french":148,"./japanese":150,"./spanish":151}],150:[function(require,module,exports){
 'use strict';
 
 var japanese = ['あいこくしん', 'あいさつ', 'あいだ', 'あおぞら', 'あかちゃん', 'あきる', 'あけがた', 'あける', 'あこがれる', 'あさい', 'あさひ', 'あしあと', 'あじわう', 'あずかる', 'あずき', 'あそぶ', 'あたえる', 'あたためる', 'あたりまえ', 'あたる', 'あつい', 'あつかう', 'あっしゅく', 'あつまり', 'あつめる', 'あてな', 'あてはまる', 'あひる', 'あぶら', 'あぶる', 'あふれる', 'あまい', 'あまど', 'あまやかす', 'あまり', 'あみもの', 'あめりか', 'あやまる', 'あゆむ', 'あらいぐま', 'あらし', 'あらすじ', 'あらためる', 'あらゆる', 'あらわす', 'ありがとう', 'あわせる', 'あわてる', 'あんい', 'あんがい', 'あんこ', 'あんぜん', 'あんてい', 'あんない', 'あんまり', 'いいだす', 'いおん', 'いがい', 'いがく', 'いきおい', 'いきなり', 'いきもの', 'いきる', 'いくじ', 'いくぶん', 'いけばな', 'いけん', 'いこう', 'いこく', 'いこつ', 'いさましい', 'いさん', 'いしき', 'いじゅう', 'いじょう', 'いじわる', 'いずみ', 'いずれ', 'いせい', 'いせえび', 'いせかい', 'いせき', 'いぜん', 'いそうろう', 'いそがしい', 'いだい', 'いだく', 'いたずら', 'いたみ', 'いたりあ', 'いちおう', 'いちじ', 'いちど', 'いちば', 'いちぶ', 'いちりゅう', 'いつか', 'いっしゅん', 'いっせい', 'いっそう', 'いったん', 'いっち', 'いってい', 'いっぽう', 'いてざ', 'いてん', 'いどう', 'いとこ', 'いない', 'いなか', 'いねむり', 'いのち', 'いのる', 'いはつ', 'いばる', 'いはん', 'いびき', 'いひん', 'いふく', 'いへん', 'いほう', 'いみん', 'いもうと', 'いもたれ', 'いもり', 'いやがる', 'いやす', 'いよかん', 'いよく', 'いらい', 'いらすと', 'いりぐち', 'いりょう', 'いれい', 'いれもの', 'いれる', 'いろえんぴつ', 'いわい', 'いわう', 'いわかん', 'いわば', 'いわゆる', 'いんげんまめ', 'いんさつ', 'いんしょう', 'いんよう', 'うえき', 'うえる', 'うおざ', 'うがい', 'うかぶ', 'うかべる', 'うきわ', 'うくらいな', 'うくれれ', 'うけたまわる', 'うけつけ', 'うけとる', 'うけもつ', 'うける', 'うごかす', 'うごく', 'うこん', 'うさぎ', 'うしなう', 'うしろがみ', 'うすい', 'うすぎ', 'うすぐらい', 'うすめる', 'うせつ', 'うちあわせ', 'うちがわ', 'うちき', 'うちゅう', 'うっかり', 'うつくしい', 'うったえる', 'うつる', 'うどん', 'うなぎ', 'うなじ', 'うなずく', 'うなる', 'うねる', 'うのう', 'うぶげ', 'うぶごえ', 'うまれる', 'うめる', 'うもう', 'うやまう', 'うよく', 'うらがえす', 'うらぐち', 'うらない', 'うりあげ', 'うりきれ', 'うるさい', 'うれしい', 'うれゆき', 'うれる', 'うろこ', 'うわき', 'うわさ', 'うんこう', 'うんちん', 'うんてん', 'うんどう', 'えいえん', 'えいが', 'えいきょう', 'えいご', 'えいせい', 'えいぶん', 'えいよう', 'えいわ', 'えおり', 'えがお', 'えがく', 'えきたい', 'えくせる', 'えしゃく', 'えすて', 'えつらん', 'えのぐ', 'えほうまき', 'えほん', 'えまき', 'えもじ', 'えもの', 'えらい', 'えらぶ', 'えりあ', 'えんえん', 'えんかい', 'えんぎ', 'えんげき', 'えんしゅう', 'えんぜつ', 'えんそく', 'えんちょう', 'えんとつ', 'おいかける', 'おいこす', 'おいしい', 'おいつく', 'おうえん', 'おうさま', 'おうじ', 'おうせつ', 'おうたい', 'おうふく', 'おうべい', 'おうよう', 'おえる', 'おおい', 'おおう', 'おおどおり', 'おおや', 'おおよそ', 'おかえり', 'おかず', 'おがむ', 'おかわり', 'おぎなう', 'おきる', 'おくさま', 'おくじょう', 'おくりがな', 'おくる', 'おくれる', 'おこす', 'おこなう', 'おこる', 'おさえる', 'おさない', 'おさめる', 'おしいれ', 'おしえる', 'おじぎ', 'おじさん', 'おしゃれ', 'おそらく', 'おそわる', 'おたがい', 'おたく', 'おだやか', 'おちつく', 'おっと', 'おつり', 'おでかけ', 'おとしもの', 'おとなしい', 'おどり', 'おどろかす', 'おばさん', 'おまいり', 'おめでとう', 'おもいで', 'おもう', 'おもたい', 'おもちゃ', 'おやつ', 'おやゆび', 'およぼす', 'おらんだ', 'おろす', 'おんがく', 'おんけい', 'おんしゃ', 'おんせん', 'おんだん', 'おんちゅう', 'おんどけい', 'かあつ', 'かいが', 'がいき', 'がいけん', 'がいこう', 'かいさつ', 'かいしゃ', 'かいすいよく', 'かいぜん', 'かいぞうど', 'かいつう', 'かいてん', 'かいとう', 'かいふく', 'がいへき', 'かいほう', 'かいよう', 'がいらい', 'かいわ', 'かえる', 'かおり', 'かかえる', 'かがく', 'かがし', 'かがみ', 'かくご', 'かくとく', 'かざる', 'がぞう', 'かたい', 'かたち', 'がちょう', 'がっきゅう', 'がっこう', 'がっさん', 'がっしょう', 'かなざわし', 'かのう', 'がはく', 'かぶか', 'かほう', 'かほご', 'かまう', 'かまぼこ', 'かめれおん', 'かゆい', 'かようび', 'からい', 'かるい', 'かろう', 'かわく', 'かわら', 'がんか', 'かんけい', 'かんこう', 'かんしゃ', 'かんそう', 'かんたん', 'かんち', 'がんばる', 'きあい', 'きあつ', 'きいろ', 'ぎいん', 'きうい', 'きうん', 'きえる', 'きおう', 'きおく', 'きおち', 'きおん', 'きかい', 'きかく', 'きかんしゃ', 'ききて', 'きくばり', 'きくらげ', 'きけんせい', 'きこう', 'きこえる', 'きこく', 'きさい', 'きさく', 'きさま', 'きさらぎ', 'ぎじかがく', 'ぎしき', 'ぎじたいけん', 'ぎじにってい', 'ぎじゅつしゃ', 'きすう', 'きせい', 'きせき', 'きせつ', 'きそう', 'きぞく', 'きぞん', 'きたえる', 'きちょう', 'きつえん', 'ぎっちり', 'きつつき', 'きつね', 'きてい', 'きどう', 'きどく', 'きない', 'きなが', 'きなこ', 'きぬごし', 'きねん', 'きのう', 'きのした', 'きはく', 'きびしい', 'きひん', 'きふく', 'きぶん', 'きぼう', 'きほん', 'きまる', 'きみつ', 'きむずかしい', 'きめる', 'きもだめし', 'きもち', 'きもの', 'きゃく', 'きやく', 'ぎゅうにく', 'きよう', 'きょうりゅう', 'きらい', 'きらく', 'きりん', 'きれい', 'きれつ', 'きろく', 'ぎろん', 'きわめる', 'ぎんいろ', 'きんかくじ', 'きんじょ', 'きんようび', 'ぐあい', 'くいず', 'くうかん', 'くうき', 'くうぐん', 'くうこう', 'ぐうせい', 'くうそう', 'ぐうたら', 'くうふく', 'くうぼ', 'くかん', 'くきょう', 'くげん', 'ぐこう', 'くさい', 'くさき', 'くさばな', 'くさる', 'くしゃみ', 'くしょう', 'くすのき', 'くすりゆび', 'くせげ', 'くせん', 'ぐたいてき', 'くださる', 'くたびれる', 'くちこみ', 'くちさき', 'くつした', 'ぐっすり', 'くつろぐ', 'くとうてん', 'くどく', 'くなん', 'くねくね', 'くのう', 'くふう', 'くみあわせ', 'くみたてる', 'くめる', 'くやくしょ', 'くらす', 'くらべる', 'くるま', 'くれる', 'くろう', 'くわしい', 'ぐんかん', 'ぐんしょく', 'ぐんたい', 'ぐんて', 'けあな', 'けいかく', 'けいけん', 'けいこ', 'けいさつ', 'げいじゅつ', 'けいたい', 'げいのうじん', 'けいれき', 'けいろ', 'けおとす', 'けおりもの', 'げきか', 'げきげん', 'げきだん', 'げきちん', 'げきとつ', 'げきは', 'げきやく', 'げこう', 'げこくじょう', 'げざい', 'けさき', 'げざん', 'けしき', 'けしごむ', 'けしょう', 'げすと', 'けたば', 'けちゃっぷ', 'けちらす', 'けつあつ', 'けつい', 'けつえき', 'けっこん', 'けつじょ', 'けっせき', 'けってい', 'けつまつ', 'げつようび', 'げつれい', 'けつろん', 'げどく', 'けとばす', 'けとる', 'けなげ', 'けなす', 'けなみ', 'けぬき', 'げねつ', 'けねん', 'けはい', 'げひん', 'けぶかい', 'げぼく', 'けまり', 'けみかる', 'けむし', 'けむり', 'けもの', 'けらい', 'けろけろ', 'けわしい', 'けんい', 'けんえつ', 'けんお', 'けんか', 'げんき', 'けんげん', 'けんこう', 'けんさく', 'けんしゅう', 'けんすう', 'げんそう', 'けんちく', 'けんてい', 'けんとう', 'けんない', 'けんにん', 'げんぶつ', 'けんま', 'けんみん', 'けんめい', 'けんらん', 'けんり', 'こあくま', 'こいぬ', 'こいびと', 'ごうい', 'こうえん', 'こうおん', 'こうかん', 'ごうきゅう', 'ごうけい', 'こうこう', 'こうさい', 'こうじ', 'こうすい', 'ごうせい', 'こうそく', 'こうたい', 'こうちゃ', 'こうつう', 'こうてい', 'こうどう', 'こうない', 'こうはい', 'ごうほう', 'ごうまん', 'こうもく', 'こうりつ', 'こえる', 'こおり', 'ごかい', 'ごがつ', 'ごかん', 'こくご', 'こくさい', 'こくとう', 'こくない', 'こくはく', 'こぐま', 'こけい', 'こける', 'ここのか', 'こころ', 'こさめ', 'こしつ', 'こすう', 'こせい', 'こせき', 'こぜん', 'こそだて', 'こたい', 'こたえる', 'こたつ', 'こちょう', 'こっか', 'こつこつ', 'こつばん', 'こつぶ', 'こてい', 'こてん', 'ことがら', 'ことし', 'ことば', 'ことり', 'こなごな', 'こねこね', 'このまま', 'このみ', 'このよ', 'ごはん', 'こひつじ', 'こふう', 'こふん', 'こぼれる', 'ごまあぶら', 'こまかい', 'ごますり', 'こまつな', 'こまる', 'こむぎこ', 'こもじ', 'こもち', 'こもの', 'こもん', 'こやく', 'こやま', 'こゆう', 'こゆび', 'こよい', 'こよう', 'こりる', 'これくしょん', 'ころっけ', 'こわもて', 'こわれる', 'こんいん', 'こんかい', 'こんき', 'こんしゅう', 'こんすい', 'こんだて', 'こんとん', 'こんなん', 'こんびに', 'こんぽん', 'こんまけ', 'こんや', 'こんれい', 'こんわく', 'ざいえき', 'さいかい', 'さいきん', 'ざいげん', 'ざいこ', 'さいしょ', 'さいせい', 'ざいたく', 'ざいちゅう', 'さいてき', 'ざいりょう', 'さうな', 'さかいし', 'さがす', 'さかな', 'さかみち', 'さがる', 'さぎょう', 'さくし', 'さくひん', 'さくら', 'さこく', 'さこつ', 'さずかる', 'ざせき', 'さたん', 'さつえい', 'ざつおん', 'ざっか', 'ざつがく', 'さっきょく', 'ざっし', 'さつじん', 'ざっそう', 'さつたば', 'さつまいも', 'さてい', 'さといも', 'さとう', 'さとおや', 'さとし', 'さとる', 'さのう', 'さばく', 'さびしい', 'さべつ', 'さほう', 'さほど', 'さます', 'さみしい', 'さみだれ', 'さむけ', 'さめる', 'さやえんどう', 'さゆう', 'さよう', 'さよく', 'さらだ', 'ざるそば', 'さわやか', 'さわる', 'さんいん', 'さんか', 'さんきゃく', 'さんこう', 'さんさい', 'ざんしょ', 'さんすう', 'さんせい', 'さんそ', 'さんち', 'さんま', 'さんみ', 'さんらん', 'しあい', 'しあげ', 'しあさって', 'しあわせ', 'しいく', 'しいん', 'しうち', 'しえい', 'しおけ', 'しかい', 'しかく', 'じかん', 'しごと', 'しすう', 'じだい', 'したうけ', 'したぎ', 'したて', 'したみ', 'しちょう', 'しちりん', 'しっかり', 'しつじ', 'しつもん', 'してい', 'してき', 'してつ', 'じてん', 'じどう', 'しなぎれ', 'しなもの', 'しなん', 'しねま', 'しねん', 'しのぐ', 'しのぶ', 'しはい', 'しばかり', 'しはつ', 'しはらい', 'しはん', 'しひょう', 'しふく', 'じぶん', 'しへい', 'しほう', 'しほん', 'しまう', 'しまる', 'しみん', 'しむける', 'じむしょ', 'しめい', 'しめる', 'しもん', 'しゃいん', 'しゃうん', 'しゃおん', 'じゃがいも', 'しやくしょ', 'しゃくほう', 'しゃけん', 'しゃこ', 'しゃざい', 'しゃしん', 'しゃせん', 'しゃそう', 'しゃたい', 'しゃちょう', 'しゃっきん', 'じゃま', 'しゃりん', 'しゃれい', 'じゆう', 'じゅうしょ', 'しゅくはく', 'じゅしん', 'しゅっせき', 'しゅみ', 'しゅらば', 'じゅんばん', 'しょうかい', 'しょくたく', 'しょっけん', 'しょどう', 'しょもつ', 'しらせる', 'しらべる', 'しんか', 'しんこう', 'じんじゃ', 'しんせいじ', 'しんちく', 'しんりん', 'すあげ', 'すあし', 'すあな', 'ずあん', 'すいえい', 'すいか', 'すいとう', 'ずいぶん', 'すいようび', 'すうがく', 'すうじつ', 'すうせん', 'すおどり', 'すきま', 'すくう', 'すくない', 'すける', 'すごい', 'すこし', 'ずさん', 'すずしい', 'すすむ', 'すすめる', 'すっかり', 'ずっしり', 'ずっと', 'すてき', 'すてる', 'すねる', 'すのこ', 'すはだ', 'すばらしい', 'ずひょう', 'ずぶぬれ', 'すぶり', 'すふれ', 'すべて', 'すべる', 'ずほう', 'すぼん', 'すまい', 'すめし', 'すもう', 'すやき', 'すらすら', 'するめ', 'すれちがう', 'すろっと', 'すわる', 'すんぜん', 'すんぽう', 'せあぶら', 'せいかつ', 'せいげん', 'せいじ', 'せいよう', 'せおう', 'せかいかん', 'せきにん', 'せきむ', 'せきゆ', 'せきらんうん', 'せけん', 'せこう', 'せすじ', 'せたい', 'せたけ', 'せっかく', 'せっきゃく', 'ぜっく', 'せっけん', 'せっこつ', 'せっさたくま', 'せつぞく', 'せつだん', 'せつでん', 'せっぱん', 'せつび', 'せつぶん', 'せつめい', 'せつりつ', 'せなか', 'せのび', 'せはば', 'せびろ', 'せぼね', 'せまい', 'せまる', 'せめる', 'せもたれ', 'せりふ', 'ぜんあく', 'せんい', 'せんえい', 'せんか', 'せんきょ', 'せんく', 'せんげん', 'ぜんご', 'せんさい', 'せんしゅ', 'せんすい', 'せんせい', 'せんぞ', 'せんたく', 'せんちょう', 'せんてい', 'せんとう', 'せんぬき', 'せんねん', 'せんぱい', 'ぜんぶ', 'ぜんぽう', 'せんむ', 'せんめんじょ', 'せんもん', 'せんやく', 'せんゆう', 'せんよう', 'ぜんら', 'ぜんりゃく', 'せんれい', 'せんろ', 'そあく', 'そいとげる', 'そいね', 'そうがんきょう', 'そうき', 'そうご', 'そうしん', 'そうだん', 'そうなん', 'そうび', 'そうめん', 'そうり', 'そえもの', 'そえん', 'そがい', 'そげき', 'そこう', 'そこそこ', 'そざい', 'そしな', 'そせい', 'そせん', 'そそぐ', 'そだてる', 'そつう', 'そつえん', 'そっかん', 'そつぎょう', 'そっけつ', 'そっこう', 'そっせん', 'そっと', 'そとがわ', 'そとづら', 'そなえる', 'そなた', 'そふぼ', 'そぼく', 'そぼろ', 'そまつ', 'そまる', 'そむく', 'そむりえ', 'そめる', 'そもそも', 'そよかぜ', 'そらまめ', 'そろう', 'そんかい', 'そんけい', 'そんざい', 'そんしつ', 'そんぞく', 'そんちょう', 'ぞんび', 'ぞんぶん', 'そんみん', 'たあい', 'たいいん', 'たいうん', 'たいえき', 'たいおう', 'だいがく', 'たいき', 'たいぐう', 'たいけん', 'たいこ', 'たいざい', 'だいじょうぶ', 'だいすき', 'たいせつ', 'たいそう', 'だいたい', 'たいちょう', 'たいてい', 'だいどころ', 'たいない', 'たいねつ', 'たいのう', 'たいはん', 'だいひょう', 'たいふう', 'たいへん', 'たいほ', 'たいまつばな', 'たいみんぐ', 'たいむ', 'たいめん', 'たいやき', 'たいよう', 'たいら', 'たいりょく', 'たいる', 'たいわん', 'たうえ', 'たえる', 'たおす', 'たおる', 'たおれる', 'たかい', 'たかね', 'たきび', 'たくさん', 'たこく', 'たこやき', 'たさい', 'たしざん', 'だじゃれ', 'たすける', 'たずさわる', 'たそがれ', 'たたかう', 'たたく', 'ただしい', 'たたみ', 'たちばな', 'だっかい', 'だっきゃく', 'だっこ', 'だっしゅつ', 'だったい', 'たてる', 'たとえる', 'たなばた', 'たにん', 'たぬき', 'たのしみ', 'たはつ', 'たぶん', 'たべる', 'たぼう', 'たまご', 'たまる', 'だむる', 'ためいき', 'ためす', 'ためる', 'たもつ', 'たやすい', 'たよる', 'たらす', 'たりきほんがん', 'たりょう', 'たりる', 'たると', 'たれる', 'たれんと', 'たろっと', 'たわむれる', 'だんあつ', 'たんい', 'たんおん', 'たんか', 'たんき', 'たんけん', 'たんご', 'たんさん', 'たんじょうび', 'だんせい', 'たんそく', 'たんたい', 'だんち', 'たんてい', 'たんとう', 'だんな', 'たんにん', 'だんねつ', 'たんのう', 'たんぴん', 'だんぼう', 'たんまつ', 'たんめい', 'だんれつ', 'だんろ', 'だんわ', 'ちあい', 'ちあん', 'ちいき', 'ちいさい', 'ちえん', 'ちかい', 'ちから', 'ちきゅう', 'ちきん', 'ちけいず', 'ちけん', 'ちこく', 'ちさい', 'ちしき', 'ちしりょう', 'ちせい', 'ちそう', 'ちたい', 'ちたん', 'ちちおや', 'ちつじょ', 'ちてき', 'ちてん', 'ちぬき', 'ちぬり', 'ちのう', 'ちひょう', 'ちへいせん', 'ちほう', 'ちまた', 'ちみつ', 'ちみどろ', 'ちめいど', 'ちゃんこなべ', 'ちゅうい', 'ちゆりょく', 'ちょうし', 'ちょさくけん', 'ちらし', 'ちらみ', 'ちりがみ', 'ちりょう', 'ちるど', 'ちわわ', 'ちんたい', 'ちんもく', 'ついか', 'ついたち', 'つうか', 'つうじょう', 'つうはん', 'つうわ', 'つかう', 'つかれる', 'つくね', 'つくる', 'つけね', 'つける', 'つごう', 'つたえる', 'つづく', 'つつじ', 'つつむ', 'つとめる', 'つながる', 'つなみ', 'つねづね', 'つのる', 'つぶす', 'つまらない', 'つまる', 'つみき', 'つめたい', 'つもり', 'つもる', 'つよい', 'つるぼ', 'つるみく', 'つわもの', 'つわり', 'てあし', 'てあて', 'てあみ', 'ていおん', 'ていか', 'ていき', 'ていけい', 'ていこく', 'ていさつ', 'ていし', 'ていせい', 'ていたい', 'ていど', 'ていねい', 'ていひょう', 'ていへん', 'ていぼう', 'てうち', 'ておくれ', 'てきとう', 'てくび', 'でこぼこ', 'てさぎょう', 'てさげ', 'てすり', 'てそう', 'てちがい', 'てちょう', 'てつがく', 'てつづき', 'でっぱ', 'てつぼう', 'てつや', 'でぬかえ', 'てぬき', 'てぬぐい', 'てのひら', 'てはい', 'てぶくろ', 'てふだ', 'てほどき', 'てほん', 'てまえ', 'てまきずし', 'てみじか', 'てみやげ', 'てらす', 'てれび', 'てわけ', 'てわたし', 'でんあつ', 'てんいん', 'てんかい', 'てんき', 'てんぐ', 'てんけん', 'てんごく', 'てんさい', 'てんし', 'てんすう', 'でんち', 'てんてき', 'てんとう', 'てんない', 'てんぷら', 'てんぼうだい', 'てんめつ', 'てんらんかい', 'でんりょく', 'でんわ', 'どあい', 'といれ', 'どうかん', 'とうきゅう', 'どうぐ', 'とうし', 'とうむぎ', 'とおい', 'とおか', 'とおく', 'とおす', 'とおる', 'とかい', 'とかす', 'ときおり', 'ときどき', 'とくい', 'とくしゅう', 'とくてん', 'とくに', 'とくべつ', 'とけい', 'とける', 'とこや', 'とさか', 'としょかん', 'とそう', 'とたん', 'とちゅう', 'とっきゅう', 'とっくん', 'とつぜん', 'とつにゅう', 'とどける', 'ととのえる', 'とない', 'となえる', 'となり', 'とのさま', 'とばす', 'どぶがわ', 'とほう', 'とまる', 'とめる', 'ともだち', 'ともる', 'どようび', 'とらえる', 'とんかつ', 'どんぶり', 'ないかく', 'ないこう', 'ないしょ', 'ないす', 'ないせん', 'ないそう', 'なおす', 'ながい', 'なくす', 'なげる', 'なこうど', 'なさけ', 'なたでここ', 'なっとう', 'なつやすみ', 'ななおし', 'なにごと', 'なにもの', 'なにわ', 'なのか', 'なふだ', 'なまいき', 'なまえ', 'なまみ', 'なみだ', 'なめらか', 'なめる', 'なやむ', 'ならう', 'ならび', 'ならぶ', 'なれる', 'なわとび', 'なわばり', 'にあう', 'にいがた', 'にうけ', 'におい', 'にかい', 'にがて', 'にきび', 'にくしみ', 'にくまん', 'にげる', 'にさんかたんそ', 'にしき', 'にせもの', 'にちじょう', 'にちようび', 'にっか', 'にっき', 'にっけい', 'にっこう', 'にっさん', 'にっしょく', 'にっすう', 'にっせき', 'にってい', 'になう', 'にほん', 'にまめ', 'にもつ', 'にやり', 'にゅういん', 'にりんしゃ', 'にわとり', 'にんい', 'にんか', 'にんき', 'にんげん', 'にんしき', 'にんずう', 'にんそう', 'にんたい', 'にんち', 'にんてい', 'にんにく', 'にんぷ', 'にんまり', 'にんむ', 'にんめい', 'にんよう', 'ぬいくぎ', 'ぬかす', 'ぬぐいとる', 'ぬぐう', 'ぬくもり', 'ぬすむ', 'ぬまえび', 'ぬめり', 'ぬらす', 'ぬんちゃく', 'ねあげ', 'ねいき', 'ねいる', 'ねいろ', 'ねぐせ', 'ねくたい', 'ねくら', 'ねこぜ', 'ねこむ', 'ねさげ', 'ねすごす', 'ねそべる', 'ねだん', 'ねつい', 'ねっしん', 'ねつぞう', 'ねったいぎょ', 'ねぶそく', 'ねふだ', 'ねぼう', 'ねほりはほり', 'ねまき', 'ねまわし', 'ねみみ', 'ねむい', 'ねむたい', 'ねもと', 'ねらう', 'ねわざ', 'ねんいり', 'ねんおし', 'ねんかん', 'ねんきん', 'ねんぐ', 'ねんざ', 'ねんし', 'ねんちゃく', 'ねんど', 'ねんぴ', 'ねんぶつ', 'ねんまつ', 'ねんりょう', 'ねんれい', 'のいず', 'のおづま', 'のがす', 'のきなみ', 'のこぎり', 'のこす', 'のこる', 'のせる', 'のぞく', 'のぞむ', 'のたまう', 'のちほど', 'のっく', 'のばす', 'のはら', 'のべる', 'のぼる', 'のみもの', 'のやま', 'のらいぬ', 'のらねこ', 'のりもの', 'のりゆき', 'のれん', 'のんき', 'ばあい', 'はあく', 'ばあさん', 'ばいか', 'ばいく', 'はいけん', 'はいご', 'はいしん', 'はいすい', 'はいせん', 'はいそう', 'はいち', 'ばいばい', 'はいれつ', 'はえる', 'はおる', 'はかい', 'ばかり', 'はかる', 'はくしゅ', 'はけん', 'はこぶ', 'はさみ', 'はさん', 'はしご', 'ばしょ', 'はしる', 'はせる', 'ぱそこん', 'はそん', 'はたん', 'はちみつ', 'はつおん', 'はっかく', 'はづき', 'はっきり', 'はっくつ', 'はっけん', 'はっこう', 'はっさん', 'はっしん', 'はったつ', 'はっちゅう', 'はってん', 'はっぴょう', 'はっぽう', 'はなす', 'はなび', 'はにかむ', 'はぶらし', 'はみがき', 'はむかう', 'はめつ', 'はやい', 'はやし', 'はらう', 'はろうぃん', 'はわい', 'はんい', 'はんえい', 'はんおん', 'はんかく', 'はんきょう', 'ばんぐみ', 'はんこ', 'はんしゃ', 'はんすう', 'はんだん', 'ぱんち', 'ぱんつ', 'はんてい', 'はんとし', 'はんのう', 'はんぱ', 'はんぶん', 'はんぺん', 'はんぼうき', 'はんめい', 'はんらん', 'はんろん', 'ひいき', 'ひうん', 'ひえる', 'ひかく', 'ひかり', 'ひかる', 'ひかん', 'ひくい', 'ひけつ', 'ひこうき', 'ひこく', 'ひさい', 'ひさしぶり', 'ひさん', 'びじゅつかん', 'ひしょ', 'ひそか', 'ひそむ', 'ひたむき', 'ひだり', 'ひたる', 'ひつぎ', 'ひっこし', 'ひっし', 'ひつじゅひん', 'ひっす', 'ひつぜん', 'ぴったり', 'ぴっちり', 'ひつよう', 'ひてい', 'ひとごみ', 'ひなまつり', 'ひなん', 'ひねる', 'ひはん', 'ひびく', 'ひひょう', 'ひほう', 'ひまわり', 'ひまん', 'ひみつ', 'ひめい', 'ひめじし', 'ひやけ', 'ひやす', 'ひよう', 'びょうき', 'ひらがな', 'ひらく', 'ひりつ', 'ひりょう', 'ひるま', 'ひるやすみ', 'ひれい', 'ひろい', 'ひろう', 'ひろき', 'ひろゆき', 'ひんかく', 'ひんけつ', 'ひんこん', 'ひんしゅ', 'ひんそう', 'ぴんち', 'ひんぱん', 'びんぼう', 'ふあん', 'ふいうち', 'ふうけい', 'ふうせん', 'ぷうたろう', 'ふうとう', 'ふうふ', 'ふえる', 'ふおん', 'ふかい', 'ふきん', 'ふくざつ', 'ふくぶくろ', 'ふこう', 'ふさい', 'ふしぎ', 'ふじみ', 'ふすま', 'ふせい', 'ふせぐ', 'ふそく', 'ぶたにく', 'ふたん', 'ふちょう', 'ふつう', 'ふつか', 'ふっかつ', 'ふっき', 'ふっこく', 'ぶどう', 'ふとる', 'ふとん', 'ふのう', 'ふはい', 'ふひょう', 'ふへん', 'ふまん', 'ふみん', 'ふめつ', 'ふめん', 'ふよう', 'ふりこ', 'ふりる', 'ふるい', 'ふんいき', 'ぶんがく', 'ぶんぐ', 'ふんしつ', 'ぶんせき', 'ふんそう', 'ぶんぽう', 'へいあん', 'へいおん', 'へいがい', 'へいき', 'へいげん', 'へいこう', 'へいさ', 'へいしゃ', 'へいせつ', 'へいそ', 'へいたく', 'へいてん', 'へいねつ', 'へいわ', 'へきが', 'へこむ', 'べにいろ', 'べにしょうが', 'へらす', 'へんかん', 'べんきょう', 'べんごし', 'へんさい', 'へんたい', 'べんり', 'ほあん', 'ほいく', 'ぼうぎょ', 'ほうこく', 'ほうそう', 'ほうほう', 'ほうもん', 'ほうりつ', 'ほえる', 'ほおん', 'ほかん', 'ほきょう', 'ぼきん', 'ほくろ', 'ほけつ', 'ほけん', 'ほこう', 'ほこる', 'ほしい', 'ほしつ', 'ほしゅ', 'ほしょう', 'ほせい', 'ほそい', 'ほそく', 'ほたて', 'ほたる', 'ぽちぶくろ', 'ほっきょく', 'ほっさ', 'ほったん', 'ほとんど', 'ほめる', 'ほんい', 'ほんき', 'ほんけ', 'ほんしつ', 'ほんやく', 'まいにち', 'まかい', 'まかせる', 'まがる', 'まける', 'まこと', 'まさつ', 'まじめ', 'ますく', 'まぜる', 'まつり', 'まとめ', 'まなぶ', 'まぬけ', 'まねく', 'まほう', 'まもる', 'まゆげ', 'まよう', 'まろやか', 'まわす', 'まわり', 'まわる', 'まんが', 'まんきつ', 'まんぞく', 'まんなか', 'みいら', 'みうち', 'みえる', 'みがく', 'みかた', 'みかん', 'みけん', 'みこん', 'みじかい', 'みすい', 'みすえる', 'みせる', 'みっか', 'みつかる', 'みつける', 'みてい', 'みとめる', 'みなと', 'みなみかさい', 'みねらる', 'みのう', 'みのがす', 'みほん', 'みもと', 'みやげ', 'みらい', 'みりょく', 'みわく', 'みんか', 'みんぞく', 'むいか', 'むえき', 'むえん', 'むかい', 'むかう', 'むかえ', 'むかし', 'むぎちゃ', 'むける', 'むげん', 'むさぼる', 'むしあつい', 'むしば', 'むじゅん', 'むしろ', 'むすう', 'むすこ', 'むすぶ', 'むすめ', 'むせる', 'むせん', 'むちゅう', 'むなしい', 'むのう', 'むやみ', 'むよう', 'むらさき', 'むりょう', 'むろん', 'めいあん', 'めいうん', 'めいえん', 'めいかく', 'めいきょく', 'めいさい', 'めいし', 'めいそう', 'めいぶつ', 'めいれい', 'めいわく', 'めぐまれる', 'めざす', 'めした', 'めずらしい', 'めだつ', 'めまい', 'めやす', 'めんきょ', 'めんせき', 'めんどう', 'もうしあげる', 'もうどうけん', 'もえる', 'もくし', 'もくてき', 'もくようび', 'もちろん', 'もどる', 'もらう', 'もんく', 'もんだい', 'やおや', 'やける', 'やさい', 'やさしい', 'やすい', 'やすたろう', 'やすみ', 'やせる', 'やそう', 'やたい', 'やちん', 'やっと', 'やっぱり', 'やぶる', 'やめる', 'ややこしい', 'やよい', 'やわらかい', 'ゆうき', 'ゆうびんきょく', 'ゆうべ', 'ゆうめい', 'ゆけつ', 'ゆしゅつ', 'ゆせん', 'ゆそう', 'ゆたか', 'ゆちゃく', 'ゆでる', 'ゆにゅう', 'ゆびわ', 'ゆらい', 'ゆれる', 'ようい', 'ようか', 'ようきゅう', 'ようじ', 'ようす', 'ようちえん', 'よかぜ', 'よかん', 'よきん', 'よくせい', 'よくぼう', 'よけい', 'よごれる', 'よさん', 'よしゅう', 'よそう', 'よそく', 'よっか', 'よてい', 'よどがわく', 'よねつ', 'よやく', 'よゆう', 'よろこぶ', 'よろしい', 'らいう', 'らくがき', 'らくご', 'らくさつ', 'らくだ', 'らしんばん', 'らせん', 'らぞく', 'らたい', 'らっか', 'られつ', 'りえき', 'りかい', 'りきさく', 'りきせつ', 'りくぐん', 'りくつ', 'りけん', 'りこう', 'りせい', 'りそう', 'りそく', 'りてん', 'りねん', 'りゆう', 'りゅうがく', 'りよう', 'りょうり', 'りょかん', 'りょくちゃ', 'りょこう', 'りりく', 'りれき', 'りろん', 'りんご', 'るいけい', 'るいさい', 'るいじ', 'るいせき', 'るすばん', 'るりがわら', 'れいかん', 'れいぎ', 'れいせい', 'れいぞうこ', 'れいとう', 'れいぼう', 'れきし', 'れきだい', 'れんあい', 'れんけい', 'れんこん', 'れんさい', 'れんしゅう', 'れんぞく', 'れんらく', 'ろうか', 'ろうご', 'ろうじん', 'ろうそく', 'ろくが', 'ろこつ', 'ろじうら', 'ろしゅつ', 'ろせん', 'ろてん', 'ろめん', 'ろれつ', 'ろんぎ', 'ろんぱ', 'ろんぶん', 'ろんり', 'わかす', 'わかめ', 'わかやま', 'わかれる', 'わしつ', 'わじまし', 'わすれもの', 'わらう', 'われる'];
 
 module.exports = japanese;
 
-},{}],147:[function(require,module,exports){
+},{}],151:[function(require,module,exports){
 'use strict';
 
 var spanish = ['ábaco', 'abdomen', 'abeja', 'abierto', 'abogado', 'abono', 'aborto', 'abrazo', 'abrir', 'abuelo', 'abuso', 'acabar', 'academia', 'acceso', 'acción', 'aceite', 'acelga', 'acento', 'aceptar', 'ácido', 'aclarar', 'acné', 'acoger', 'acoso', 'activo', 'acto', 'actriz', 'actuar', 'acudir', 'acuerdo', 'acusar', 'adicto', 'admitir', 'adoptar', 'adorno', 'aduana', 'adulto', 'aéreo', 'afectar', 'afición', 'afinar', 'afirmar', 'ágil', 'agitar', 'agonía', 'agosto', 'agotar', 'agregar', 'agrio', 'agua', 'agudo', 'águila', 'aguja', 'ahogo', 'ahorro', 'aire', 'aislar', 'ajedrez', 'ajeno', 'ajuste', 'alacrán', 'alambre', 'alarma', 'alba', 'álbum', 'alcalde', 'aldea', 'alegre', 'alejar', 'alerta', 'aleta', 'alfiler', 'alga', 'algodón', 'aliado', 'aliento', 'alivio', 'alma', 'almeja', 'almíbar', 'altar', 'alteza', 'altivo', 'alto', 'altura', 'alumno', 'alzar', 'amable', 'amante', 'amapola', 'amargo', 'amasar', 'ámbar', 'ámbito', 'ameno', 'amigo', 'amistad', 'amor', 'amparo', 'amplio', 'ancho', 'anciano', 'ancla', 'andar', 'andén', 'anemia', 'ángulo', 'anillo', 'ánimo', 'anís', 'anotar', 'antena', 'antiguo', 'antojo', 'anual', 'anular', 'anuncio', 'añadir', 'añejo', 'año', 'apagar', 'aparato', 'apetito', 'apio', 'aplicar', 'apodo', 'aporte', 'apoyo', 'aprender', 'aprobar', 'apuesta', 'apuro', 'arado', 'araña', 'arar', 'árbitro', 'árbol', 'arbusto', 'archivo', 'arco', 'arder', 'ardilla', 'arduo', 'área', 'árido', 'aries', 'armonía', 'arnés', 'aroma', 'arpa', 'arpón', 'arreglo', 'arroz', 'arruga', 'arte', 'artista', 'asa', 'asado', 'asalto', 'ascenso', 'asegurar', 'aseo', 'asesor', 'asiento', 'asilo', 'asistir', 'asno', 'asombro', 'áspero', 'astilla', 'astro', 'astuto', 'asumir', 'asunto', 'atajo', 'ataque', 'atar', 'atento', 'ateo', 'ático', 'atleta', 'átomo', 'atraer', 'atroz', 'atún', 'audaz', 'audio', 'auge', 'aula', 'aumento', 'ausente', 'autor', 'aval', 'avance', 'avaro', 'ave', 'avellana', 'avena', 'avestruz', 'avión', 'aviso', 'ayer', 'ayuda', 'ayuno', 'azafrán', 'azar', 'azote', 'azúcar', 'azufre', 'azul', 'baba', 'babor', 'bache', 'bahía', 'baile', 'bajar', 'balanza', 'balcón', 'balde', 'bambú', 'banco', 'banda', 'baño', 'barba', 'barco', 'barniz', 'barro', 'báscula', 'bastón', 'basura', 'batalla', 'batería', 'batir', 'batuta', 'baúl', 'bazar', 'bebé', 'bebida', 'bello', 'besar', 'beso', 'bestia', 'bicho', 'bien', 'bingo', 'blanco', 'bloque', 'blusa', 'boa', 'bobina', 'bobo', 'boca', 'bocina', 'boda', 'bodega', 'boina', 'bola', 'bolero', 'bolsa', 'bomba', 'bondad', 'bonito', 'bono', 'bonsái', 'borde', 'borrar', 'bosque', 'bote', 'botín', 'bóveda', 'bozal', 'bravo', 'brazo', 'brecha', 'breve', 'brillo', 'brinco', 'brisa', 'broca', 'broma', 'bronce', 'brote', 'bruja', 'brusco', 'bruto', 'buceo', 'bucle', 'bueno', 'buey', 'bufanda', 'bufón', 'búho', 'buitre', 'bulto', 'burbuja', 'burla', 'burro', 'buscar', 'butaca', 'buzón', 'caballo', 'cabeza', 'cabina', 'cabra', 'cacao', 'cadáver', 'cadena', 'caer', 'café', 'caída', 'caimán', 'caja', 'cajón', 'cal', 'calamar', 'calcio', 'caldo', 'calidad', 'calle', 'calma', 'calor', 'calvo', 'cama', 'cambio', 'camello', 'camino', 'campo', 'cáncer', 'candil', 'canela', 'canguro', 'canica', 'canto', 'caña', 'cañón', 'caoba', 'caos', 'capaz', 'capitán', 'capote', 'captar', 'capucha', 'cara', 'carbón', 'cárcel', 'careta', 'carga', 'cariño', 'carne', 'carpeta', 'carro', 'carta', 'casa', 'casco', 'casero', 'caspa', 'castor', 'catorce', 'catre', 'caudal', 'causa', 'cazo', 'cebolla', 'ceder', 'cedro', 'celda', 'célebre', 'celoso', 'célula', 'cemento', 'ceniza', 'centro', 'cerca', 'cerdo', 'cereza', 'cero', 'cerrar', 'certeza', 'césped', 'cetro', 'chacal', 'chaleco', 'champú', 'chancla', 'chapa', 'charla', 'chico', 'chiste', 'chivo', 'choque', 'choza', 'chuleta', 'chupar', 'ciclón', 'ciego', 'cielo', 'cien', 'cierto', 'cifra', 'cigarro', 'cima', 'cinco', 'cine', 'cinta', 'ciprés', 'circo', 'ciruela', 'cisne', 'cita', 'ciudad', 'clamor', 'clan', 'claro', 'clase', 'clave', 'cliente', 'clima', 'clínica', 'cobre', 'cocción', 'cochino', 'cocina', 'coco', 'código', 'codo', 'cofre', 'coger', 'cohete', 'cojín', 'cojo', 'cola', 'colcha', 'colegio', 'colgar', 'colina', 'collar', 'colmo', 'columna', 'combate', 'comer', 'comida', 'cómodo', 'compra', 'conde', 'conejo', 'conga', 'conocer', 'consejo', 'contar', 'copa', 'copia', 'corazón', 'corbata', 'corcho', 'cordón', 'corona', 'correr', 'coser', 'cosmos', 'costa', 'cráneo', 'cráter', 'crear', 'crecer', 'creído', 'crema', 'cría', 'crimen', 'cripta', 'crisis', 'cromo', 'crónica', 'croqueta', 'crudo', 'cruz', 'cuadro', 'cuarto', 'cuatro', 'cubo', 'cubrir', 'cuchara', 'cuello', 'cuento', 'cuerda', 'cuesta', 'cueva', 'cuidar', 'culebra', 'culpa', 'culto', 'cumbre', 'cumplir', 'cuna', 'cuneta', 'cuota', 'cupón', 'cúpula', 'curar', 'curioso', 'curso', 'curva', 'cutis', 'dama', 'danza', 'dar', 'dardo', 'dátil', 'deber', 'débil', 'década', 'decir', 'dedo', 'defensa', 'definir', 'dejar', 'delfín', 'delgado', 'delito', 'demora', 'denso', 'dental', 'deporte', 'derecho', 'derrota', 'desayuno', 'deseo', 'desfile', 'desnudo', 'destino', 'desvío', 'detalle', 'detener', 'deuda', 'día', 'diablo', 'diadema', 'diamante', 'diana', 'diario', 'dibujo', 'dictar', 'diente', 'dieta', 'diez', 'difícil', 'digno', 'dilema', 'diluir', 'dinero', 'directo', 'dirigir', 'disco', 'diseño', 'disfraz', 'diva', 'divino', 'doble', 'doce', 'dolor', 'domingo', 'don', 'donar', 'dorado', 'dormir', 'dorso', 'dos', 'dosis', 'dragón', 'droga', 'ducha', 'duda', 'duelo', 'dueño', 'dulce', 'dúo', 'duque', 'durar', 'dureza', 'duro', 'ébano', 'ebrio', 'echar', 'eco', 'ecuador', 'edad', 'edición', 'edificio', 'editor', 'educar', 'efecto', 'eficaz', 'eje', 'ejemplo', 'elefante', 'elegir', 'elemento', 'elevar', 'elipse', 'élite', 'elixir', 'elogio', 'eludir', 'embudo', 'emitir', 'emoción', 'empate', 'empeño', 'empleo', 'empresa', 'enano', 'encargo', 'enchufe', 'encía', 'enemigo', 'enero', 'enfado', 'enfermo', 'engaño', 'enigma', 'enlace', 'enorme', 'enredo', 'ensayo', 'enseñar', 'entero', 'entrar', 'envase', 'envío', 'época', 'equipo', 'erizo', 'escala', 'escena', 'escolar', 'escribir', 'escudo', 'esencia', 'esfera', 'esfuerzo', 'espada', 'espejo', 'espía', 'esposa', 'espuma', 'esquí', 'estar', 'este', 'estilo', 'estufa', 'etapa', 'eterno', 'ética', 'etnia', 'evadir', 'evaluar', 'evento', 'evitar', 'exacto', 'examen', 'exceso', 'excusa', 'exento', 'exigir', 'exilio', 'existir', 'éxito', 'experto', 'explicar', 'exponer', 'extremo', 'fábrica', 'fábula', 'fachada', 'fácil', 'factor', 'faena', 'faja', 'falda', 'fallo', 'falso', 'faltar', 'fama', 'familia', 'famoso', 'faraón', 'farmacia', 'farol', 'farsa', 'fase', 'fatiga', 'fauna', 'favor', 'fax', 'febrero', 'fecha', 'feliz', 'feo', 'feria', 'feroz', 'fértil', 'fervor', 'festín', 'fiable', 'fianza', 'fiar', 'fibra', 'ficción', 'ficha', 'fideo', 'fiebre', 'fiel', 'fiera', 'fiesta', 'figura', 'fijar', 'fijo', 'fila', 'filete', 'filial', 'filtro', 'fin', 'finca', 'fingir', 'finito', 'firma', 'flaco', 'flauta', 'flecha', 'flor', 'flota', 'fluir', 'flujo', 'flúor', 'fobia', 'foca', 'fogata', 'fogón', 'folio', 'folleto', 'fondo', 'forma', 'forro', 'fortuna', 'forzar', 'fosa', 'foto', 'fracaso', 'frágil', 'franja', 'frase', 'fraude', 'freír', 'freno', 'fresa', 'frío', 'frito', 'fruta', 'fuego', 'fuente', 'fuerza', 'fuga', 'fumar', 'función', 'funda', 'furgón', 'furia', 'fusil', 'fútbol', 'futuro', 'gacela', 'gafas', 'gaita', 'gajo', 'gala', 'galería', 'gallo', 'gamba', 'ganar', 'gancho', 'ganga', 'ganso', 'garaje', 'garza', 'gasolina', 'gastar', 'gato', 'gavilán', 'gemelo', 'gemir', 'gen', 'género', 'genio', 'gente', 'geranio', 'gerente', 'germen', 'gesto', 'gigante', 'gimnasio', 'girar', 'giro', 'glaciar', 'globo', 'gloria', 'gol', 'golfo', 'goloso', 'golpe', 'goma', 'gordo', 'gorila', 'gorra', 'gota', 'goteo', 'gozar', 'grada', 'gráfico', 'grano', 'grasa', 'gratis', 'grave', 'grieta', 'grillo', 'gripe', 'gris', 'grito', 'grosor', 'grúa', 'grueso', 'grumo', 'grupo', 'guante', 'guapo', 'guardia', 'guerra', 'guía', 'guiño', 'guion', 'guiso', 'guitarra', 'gusano', 'gustar', 'haber', 'hábil', 'hablar', 'hacer', 'hacha', 'hada', 'hallar', 'hamaca', 'harina', 'haz', 'hazaña', 'hebilla', 'hebra', 'hecho', 'helado', 'helio', 'hembra', 'herir', 'hermano', 'héroe', 'hervir', 'hielo', 'hierro', 'hígado', 'higiene', 'hijo', 'himno', 'historia', 'hocico', 'hogar', 'hoguera', 'hoja', 'hombre', 'hongo', 'honor', 'honra', 'hora', 'hormiga', 'horno', 'hostil', 'hoyo', 'hueco', 'huelga', 'huerta', 'hueso', 'huevo', 'huida', 'huir', 'humano', 'húmedo', 'humilde', 'humo', 'hundir', 'huracán', 'hurto', 'icono', 'ideal', 'idioma', 'ídolo', 'iglesia', 'iglú', 'igual', 'ilegal', 'ilusión', 'imagen', 'imán', 'imitar', 'impar', 'imperio', 'imponer', 'impulso', 'incapaz', 'índice', 'inerte', 'infiel', 'informe', 'ingenio', 'inicio', 'inmenso', 'inmune', 'innato', 'insecto', 'instante', 'interés', 'íntimo', 'intuir', 'inútil', 'invierno', 'ira', 'iris', 'ironía', 'isla', 'islote', 'jabalí', 'jabón', 'jamón', 'jarabe', 'jardín', 'jarra', 'jaula', 'jazmín', 'jefe', 'jeringa', 'jinete', 'jornada', 'joroba', 'joven', 'joya', 'juerga', 'jueves', 'juez', 'jugador', 'jugo', 'juguete', 'juicio', 'junco', 'jungla', 'junio', 'juntar', 'júpiter', 'jurar', 'justo', 'juvenil', 'juzgar', 'kilo', 'koala', 'labio', 'lacio', 'lacra', 'lado', 'ladrón', 'lagarto', 'lágrima', 'laguna', 'laico', 'lamer', 'lámina', 'lámpara', 'lana', 'lancha', 'langosta', 'lanza', 'lápiz', 'largo', 'larva', 'lástima', 'lata', 'látex', 'latir', 'laurel', 'lavar', 'lazo', 'leal', 'lección', 'leche', 'lector', 'leer', 'legión', 'legumbre', 'lejano', 'lengua', 'lento', 'leña', 'león', 'leopardo', 'lesión', 'letal', 'letra', 'leve', 'leyenda', 'libertad', 'libro', 'licor', 'líder', 'lidiar', 'lienzo', 'liga', 'ligero', 'lima', 'límite', 'limón', 'limpio', 'lince', 'lindo', 'línea', 'lingote', 'lino', 'linterna', 'líquido', 'liso', 'lista', 'litera', 'litio', 'litro', 'llaga', 'llama', 'llanto', 'llave', 'llegar', 'llenar', 'llevar', 'llorar', 'llover', 'lluvia', 'lobo', 'loción', 'loco', 'locura', 'lógica', 'logro', 'lombriz', 'lomo', 'lonja', 'lote', 'lucha', 'lucir', 'lugar', 'lujo', 'luna', 'lunes', 'lupa', 'lustro', 'luto', 'luz', 'maceta', 'macho', 'madera', 'madre', 'maduro', 'maestro', 'mafia', 'magia', 'mago', 'maíz', 'maldad', 'maleta', 'malla', 'malo', 'mamá', 'mambo', 'mamut', 'manco', 'mando', 'manejar', 'manga', 'maniquí', 'manjar', 'mano', 'manso', 'manta', 'mañana', 'mapa', 'máquina', 'mar', 'marco', 'marea', 'marfil', 'margen', 'marido', 'mármol', 'marrón', 'martes', 'marzo', 'masa', 'máscara', 'masivo', 'matar', 'materia', 'matiz', 'matriz', 'máximo', 'mayor', 'mazorca', 'mecha', 'medalla', 'medio', 'médula', 'mejilla', 'mejor', 'melena', 'melón', 'memoria', 'menor', 'mensaje', 'mente', 'menú', 'mercado', 'merengue', 'mérito', 'mes', 'mesón', 'meta', 'meter', 'método', 'metro', 'mezcla', 'miedo', 'miel', 'miembro', 'miga', 'mil', 'milagro', 'militar', 'millón', 'mimo', 'mina', 'minero', 'mínimo', 'minuto', 'miope', 'mirar', 'misa', 'miseria', 'misil', 'mismo', 'mitad', 'mito', 'mochila', 'moción', 'moda', 'modelo', 'moho', 'mojar', 'molde', 'moler', 'molino', 'momento', 'momia', 'monarca', 'moneda', 'monja', 'monto', 'moño', 'morada', 'morder', 'moreno', 'morir', 'morro', 'morsa', 'mortal', 'mosca', 'mostrar', 'motivo', 'mover', 'móvil', 'mozo', 'mucho', 'mudar', 'mueble', 'muela', 'muerte', 'muestra', 'mugre', 'mujer', 'mula', 'muleta', 'multa', 'mundo', 'muñeca', 'mural', 'muro', 'músculo', 'museo', 'musgo', 'música', 'muslo', 'nácar', 'nación', 'nadar', 'naipe', 'naranja', 'nariz', 'narrar', 'nasal', 'natal', 'nativo', 'natural', 'náusea', 'naval', 'nave', 'navidad', 'necio', 'néctar', 'negar', 'negocio', 'negro', 'neón', 'nervio', 'neto', 'neutro', 'nevar', 'nevera', 'nicho', 'nido', 'niebla', 'nieto', 'niñez', 'niño', 'nítido', 'nivel', 'nobleza', 'noche', 'nómina', 'noria', 'norma', 'norte', 'nota', 'noticia', 'novato', 'novela', 'novio', 'nube', 'nuca', 'núcleo', 'nudillo', 'nudo', 'nuera', 'nueve', 'nuez', 'nulo', 'número', 'nutria', 'oasis', 'obeso', 'obispo', 'objeto', 'obra', 'obrero', 'observar', 'obtener', 'obvio', 'oca', 'ocaso', 'océano', 'ochenta', 'ocho', 'ocio', 'ocre', 'octavo', 'octubre', 'oculto', 'ocupar', 'ocurrir', 'odiar', 'odio', 'odisea', 'oeste', 'ofensa', 'oferta', 'oficio', 'ofrecer', 'ogro', 'oído', 'oír', 'ojo', 'ola', 'oleada', 'olfato', 'olivo', 'olla', 'olmo', 'olor', 'olvido', 'ombligo', 'onda', 'onza', 'opaco', 'opción', 'ópera', 'opinar', 'oponer', 'optar', 'óptica', 'opuesto', 'oración', 'orador', 'oral', 'órbita', 'orca', 'orden', 'oreja', 'órgano', 'orgía', 'orgullo', 'oriente', 'origen', 'orilla', 'oro', 'orquesta', 'oruga', 'osadía', 'oscuro', 'osezno', 'oso', 'ostra', 'otoño', 'otro', 'oveja', 'óvulo', 'óxido', 'oxígeno', 'oyente', 'ozono', 'pacto', 'padre', 'paella', 'página', 'pago', 'país', 'pájaro', 'palabra', 'palco', 'paleta', 'pálido', 'palma', 'paloma', 'palpar', 'pan', 'panal', 'pánico', 'pantera', 'pañuelo', 'papá', 'papel', 'papilla', 'paquete', 'parar', 'parcela', 'pared', 'parir', 'paro', 'párpado', 'parque', 'párrafo', 'parte', 'pasar', 'paseo', 'pasión', 'paso', 'pasta', 'pata', 'patio', 'patria', 'pausa', 'pauta', 'pavo', 'payaso', 'peatón', 'pecado', 'pecera', 'pecho', 'pedal', 'pedir', 'pegar', 'peine', 'pelar', 'peldaño', 'pelea', 'peligro', 'pellejo', 'pelo', 'peluca', 'pena', 'pensar', 'peñón', 'peón', 'peor', 'pepino', 'pequeño', 'pera', 'percha', 'perder', 'pereza', 'perfil', 'perico', 'perla', 'permiso', 'perro', 'persona', 'pesa', 'pesca', 'pésimo', 'pestaña', 'pétalo', 'petróleo', 'pez', 'pezuña', 'picar', 'pichón', 'pie', 'piedra', 'pierna', 'pieza', 'pijama', 'pilar', 'piloto', 'pimienta', 'pino', 'pintor', 'pinza', 'piña', 'piojo', 'pipa', 'pirata', 'pisar', 'piscina', 'piso', 'pista', 'pitón', 'pizca', 'placa', 'plan', 'plata', 'playa', 'plaza', 'pleito', 'pleno', 'plomo', 'pluma', 'plural', 'pobre', 'poco', 'poder', 'podio', 'poema', 'poesía', 'poeta', 'polen', 'policía', 'pollo', 'polvo', 'pomada', 'pomelo', 'pomo', 'pompa', 'poner', 'porción', 'portal', 'posada', 'poseer', 'posible', 'poste', 'potencia', 'potro', 'pozo', 'prado', 'precoz', 'pregunta', 'premio', 'prensa', 'preso', 'previo', 'primo', 'príncipe', 'prisión', 'privar', 'proa', 'probar', 'proceso', 'producto', 'proeza', 'profesor', 'programa', 'prole', 'promesa', 'pronto', 'propio', 'próximo', 'prueba', 'público', 'puchero', 'pudor', 'pueblo', 'puerta', 'puesto', 'pulga', 'pulir', 'pulmón', 'pulpo', 'pulso', 'puma', 'punto', 'puñal', 'puño', 'pupa', 'pupila', 'puré', 'quedar', 'queja', 'quemar', 'querer', 'queso', 'quieto', 'química', 'quince', 'quitar', 'rábano', 'rabia', 'rabo', 'ración', 'radical', 'raíz', 'rama', 'rampa', 'rancho', 'rango', 'rapaz', 'rápido', 'rapto', 'rasgo', 'raspa', 'rato', 'rayo', 'raza', 'razón', 'reacción', 'realidad', 'rebaño', 'rebote', 'recaer', 'receta', 'rechazo', 'recoger', 'recreo', 'recto', 'recurso', 'red', 'redondo', 'reducir', 'reflejo', 'reforma', 'refrán', 'refugio', 'regalo', 'regir', 'regla', 'regreso', 'rehén', 'reino', 'reír', 'reja', 'relato', 'relevo', 'relieve', 'relleno', 'reloj', 'remar', 'remedio', 'remo', 'rencor', 'rendir', 'renta', 'reparto', 'repetir', 'reposo', 'reptil', 'res', 'rescate', 'resina', 'respeto', 'resto', 'resumen', 'retiro', 'retorno', 'retrato', 'reunir', 'revés', 'revista', 'rey', 'rezar', 'rico', 'riego', 'rienda', 'riesgo', 'rifa', 'rígido', 'rigor', 'rincón', 'riñón', 'río', 'riqueza', 'risa', 'ritmo', 'rito', 'rizo', 'roble', 'roce', 'rociar', 'rodar', 'rodeo', 'rodilla', 'roer', 'rojizo', 'rojo', 'romero', 'romper', 'ron', 'ronco', 'ronda', 'ropa', 'ropero', 'rosa', 'rosca', 'rostro', 'rotar', 'rubí', 'rubor', 'rudo', 'rueda', 'rugir', 'ruido', 'ruina', 'ruleta', 'rulo', 'rumbo', 'rumor', 'ruptura', 'ruta', 'rutina', 'sábado', 'saber', 'sabio', 'sable', 'sacar', 'sagaz', 'sagrado', 'sala', 'saldo', 'salero', 'salir', 'salmón', 'salón', 'salsa', 'salto', 'salud', 'salvar', 'samba', 'sanción', 'sandía', 'sanear', 'sangre', 'sanidad', 'sano', 'santo', 'sapo', 'saque', 'sardina', 'sartén', 'sastre', 'satán', 'sauna', 'saxofón', 'sección', 'seco', 'secreto', 'secta', 'sed', 'seguir', 'seis', 'sello', 'selva', 'semana', 'semilla', 'senda', 'sensor', 'señal', 'señor', 'separar', 'sepia', 'sequía', 'ser', 'serie', 'sermón', 'servir', 'sesenta', 'sesión', 'seta', 'setenta', 'severo', 'sexo', 'sexto', 'sidra', 'siesta', 'siete', 'siglo', 'signo', 'sílaba', 'silbar', 'silencio', 'silla', 'símbolo', 'simio', 'sirena', 'sistema', 'sitio', 'situar', 'sobre', 'socio', 'sodio', 'sol', 'solapa', 'soldado', 'soledad', 'sólido', 'soltar', 'solución', 'sombra', 'sondeo', 'sonido', 'sonoro', 'sonrisa', 'sopa', 'soplar', 'soporte', 'sordo', 'sorpresa', 'sorteo', 'sostén', 'sótano', 'suave', 'subir', 'suceso', 'sudor', 'suegra', 'suelo', 'sueño', 'suerte', 'sufrir', 'sujeto', 'sultán', 'sumar', 'superar', 'suplir', 'suponer', 'supremo', 'sur', 'surco', 'sureño', 'surgir', 'susto', 'sutil', 'tabaco', 'tabique', 'tabla', 'tabú', 'taco', 'tacto', 'tajo', 'talar', 'talco', 'talento', 'talla', 'talón', 'tamaño', 'tambor', 'tango', 'tanque', 'tapa', 'tapete', 'tapia', 'tapón', 'taquilla', 'tarde', 'tarea', 'tarifa', 'tarjeta', 'tarot', 'tarro', 'tarta', 'tatuaje', 'tauro', 'taza', 'tazón', 'teatro', 'techo', 'tecla', 'técnica', 'tejado', 'tejer', 'tejido', 'tela', 'teléfono', 'tema', 'temor', 'templo', 'tenaz', 'tender', 'tener', 'tenis', 'tenso', 'teoría', 'terapia', 'terco', 'término', 'ternura', 'terror', 'tesis', 'tesoro', 'testigo', 'tetera', 'texto', 'tez', 'tibio', 'tiburón', 'tiempo', 'tienda', 'tierra', 'tieso', 'tigre', 'tijera', 'tilde', 'timbre', 'tímido', 'timo', 'tinta', 'tío', 'típico', 'tipo', 'tira', 'tirón', 'titán', 'títere', 'título', 'tiza', 'toalla', 'tobillo', 'tocar', 'tocino', 'todo', 'toga', 'toldo', 'tomar', 'tono', 'tonto', 'topar', 'tope', 'toque', 'tórax', 'torero', 'tormenta', 'torneo', 'toro', 'torpedo', 'torre', 'torso', 'tortuga', 'tos', 'tosco', 'toser', 'tóxico', 'trabajo', 'tractor', 'traer', 'tráfico', 'trago', 'traje', 'tramo', 'trance', 'trato', 'trauma', 'trazar', 'trébol', 'tregua', 'treinta', 'tren', 'trepar', 'tres', 'tribu', 'trigo', 'tripa', 'triste', 'triunfo', 'trofeo', 'trompa', 'tronco', 'tropa', 'trote', 'trozo', 'truco', 'trueno', 'trufa', 'tubería', 'tubo', 'tuerto', 'tumba', 'tumor', 'túnel', 'túnica', 'turbina', 'turismo', 'turno', 'tutor', 'ubicar', 'úlcera', 'umbral', 'unidad', 'unir', 'universo', 'uno', 'untar', 'uña', 'urbano', 'urbe', 'urgente', 'urna', 'usar', 'usuario', 'útil', 'utopía', 'uva', 'vaca', 'vacío', 'vacuna', 'vagar', 'vago', 'vaina', 'vajilla', 'vale', 'válido', 'valle', 'valor', 'válvula', 'vampiro', 'vara', 'variar', 'varón', 'vaso', 'vecino', 'vector', 'vehículo', 'veinte', 'vejez', 'vela', 'velero', 'veloz', 'vena', 'vencer', 'venda', 'veneno', 'vengar', 'venir', 'venta', 'venus', 'ver', 'verano', 'verbo', 'verde', 'vereda', 'verja', 'verso', 'verter', 'vía', 'viaje', 'vibrar', 'vicio', 'víctima', 'vida', 'vídeo', 'vidrio', 'viejo', 'viernes', 'vigor', 'vil', 'villa', 'vinagre', 'vino', 'viñedo', 'violín', 'viral', 'virgo', 'virtud', 'visor', 'víspera', 'vista', 'vitamina', 'viudo', 'vivaz', 'vivero', 'vivir', 'vivo', 'volcán', 'volumen', 'volver', 'voraz', 'votar', 'voto', 'voz', 'vuelo', 'vulgar', 'yacer', 'yate', 'yegua', 'yema', 'yerno', 'yeso', 'yodo', 'yoga', 'yogur', 'zafiro', 'zanja', 'zapato', 'zarza', 'zona', 'zorro', 'zumo', 'zurdo'];
 
 module.exports = spanish;
 
-},{}],148:[function(require,module,exports){
+},{}],152:[function(require,module,exports){
 (function (root) {
    "use strict";
 
@@ -29364,7 +29739,7 @@ UChar.udata={
    }
 }(this));
 
-},{}],149:[function(require,module,exports){
+},{}],153:[function(require,module,exports){
 (function (Buffer){
 'use strict';
 
@@ -29588,7 +29963,7 @@ PaymentProtocol.verifyCertChain = function(chain, sigHashAlg) {
 module.exports = PaymentProtocol;
 
 }).call(this,require("buffer").Buffer)
-},{"./common":150,"./rootcerts":152,"asn1.js/rfc/3280":166,"buffer":297,"jsrsasign":167}],150:[function(require,module,exports){
+},{"./common":154,"./rootcerts":156,"asn1.js/rfc/3280":170,"buffer":299,"jsrsasign":171}],154:[function(require,module,exports){
 (function (Buffer){
 'use strict';
 
@@ -30086,7 +30461,7 @@ PaymentProtocol.trusted = RootCerts.trusted;
 module.exports = PaymentProtocol;
 
 }).call(this,require("buffer").Buffer)
-},{"./rootcerts":152,"asn1.js/rfc/3280":166,"bitcore-lib":61,"buffer":297,"protobufjs/dist/ProtoBuf":168}],151:[function(require,module,exports){
+},{"./rootcerts":156,"asn1.js/rfc/3280":170,"bitcore-lib":65,"buffer":299,"protobufjs/dist/ProtoBuf":172}],155:[function(require,module,exports){
 module.exports={
   "Equifax Secure CA": "-----BEGIN CERTIFICATE-----\nMIIDIDCCAomgAwIBAgIENd70zzANBgkqhkiG9w0BAQUFADBOMQswCQYDVQQGEwJVUzEQMA4G\nA1UEChMHRXF1aWZheDEtMCsGA1UECxMkRXF1aWZheCBTZWN1cmUgQ2VydGlmaWNhdGUgQXV0\naG9yaXR5MB4XDTk4MDgyMjE2NDE1MVoXDTE4MDgyMjE2NDE1MVowTjELMAkGA1UEBhMCVVMx\nEDAOBgNVBAoTB0VxdWlmYXgxLTArBgNVBAsTJEVxdWlmYXggU2VjdXJlIENlcnRpZmljYXRl\nIEF1dGhvcml0eTCBnzANBgkqhkiG9w0BAQEFAAOBjQAwgYkCgYEAwV2xWGcIYu6gmi0fCG2R\nFGiYCh7+2gRvE4RiIcPRfM6fBeC4AfBONOziipUEZKzxa1NfBbPLZ4C/QgKO/t0BCezhABRP\n/PvwDN1Dulsr4R+AcJkVV5MW8Q+XarfCaCMczE1ZMKxRHjuvK9buY0V7xdlfUNLjUA86iOe/\nFP3gx7kCAwEAAaOCAQkwggEFMHAGA1UdHwRpMGcwZaBjoGGkXzBdMQswCQYDVQQGEwJVUzEQ\nMA4GA1UEChMHRXF1aWZheDEtMCsGA1UECxMkRXF1aWZheCBTZWN1cmUgQ2VydGlmaWNhdGUg\nQXV0aG9yaXR5MQ0wCwYDVQQDEwRDUkwxMBoGA1UdEAQTMBGBDzIwMTgwODIyMTY0MTUxWjAL\nBgNVHQ8EBAMCAQYwHwYDVR0jBBgwFoAUSOZo+SvSspXXR9gjIBBPM5iQn9QwHQYDVR0OBBYE\nFEjmaPkr0rKV10fYIyAQTzOYkJ/UMAwGA1UdEwQFMAMBAf8wGgYJKoZIhvZ9B0EABA0wCxsF\nVjMuMGMDAgbAMA0GCSqGSIb3DQEBBQUAA4GBAFjOKer89961zgK5F7WF0bnj4JXMJTENAKaS\nbn+2kmOeUJXRmm/kEd5jhW6Y7qj/WsjTVbJmcVfewCHrPSqnI0kBBIZCe/zuf6IWUrVnZ9NA\n2zsmWLIodz2uFHdh1voqZiegDfqnc1zqcPGUIWVEX/r87yloqaKHee9570+sB3c4\n-----END CERTIFICATE-----\n",
   "GlobalSign Root CA": "-----BEGIN CERTIFICATE-----\nMIIDdTCCAl2gAwIBAgILBAAAAAABFUtaw5QwDQYJKoZIhvcNAQEFBQAwVzELMAkGA1UEBhMC\nQkUxGTAXBgNVBAoTEEdsb2JhbFNpZ24gbnYtc2ExEDAOBgNVBAsTB1Jvb3QgQ0ExGzAZBgNV\nBAMTEkdsb2JhbFNpZ24gUm9vdCBDQTAeFw05ODA5MDExMjAwMDBaFw0yODAxMjgxMjAwMDBa\nMFcxCzAJBgNVBAYTAkJFMRkwFwYDVQQKExBHbG9iYWxTaWduIG52LXNhMRAwDgYDVQQLEwdS\nb290IENBMRswGQYDVQQDExJHbG9iYWxTaWduIFJvb3QgQ0EwggEiMA0GCSqGSIb3DQEBAQUA\nA4IBDwAwggEKAoIBAQDaDuaZjc6j40+Kfvvxi4Mla+pIH/EqsLmVEQS98GPR4mdmzxzdzxtI\nK+6NiY6arymAZavpxy0Sy6scTHAHoT0KMM0VjU/43dSMUBUc71DuxC73/OlS8pF94G3VNTCO\nXkNz8kHp1Wrjsok6Vjk4bwY8iGlbKk3Fp1S4bInMm/k8yuX9ifUSPJJ4ltbcdG6TRGHRjcdG\nsnUOhugZitVtbNV4FpWi6cgKOOvyJBNPc1STE4U6G7weNLWLBYy5d4ux2x8gkasJU26Qzns3\ndLlwR5EiUWMWea6xrkEmCMgZK9FGqkjWZCrXgzT/LCrBbBlDSgeF59N89iFo7+ryUp9/k5DP\nAgMBAAGjQjBAMA4GA1UdDwEB/wQEAwIBBjAPBgNVHRMBAf8EBTADAQH/MB0GA1UdDgQWBBRg\ne2YaRQ2XyolQL30EzTSo//z9SzANBgkqhkiG9w0BAQUFAAOCAQEA1nPnfE920I2/7LqivjTF\nKDK1fPxsnCwrvQmeU79rXqoRSLblCKOzyj1hTdNGCbM+w6DjY1Ub8rrvrTnhQ7k4o+YviiY7\n76BQVvnGCv04zcQLcFGUl5gE38NflNUVyRRBnMRddWQVDf9VMOyGj/8N7yy5Y0b2qvzfvGn9\nLhJIZJrglfCm7ymPAbEVtQwdpf5pLGkkeB6zpxxxYu7KyJesF12KwvhHhm4qxFYxldBniYUr\n+WymXUadDKqC5JlR3XC321Y9YeRq4VzW9v493kHMB65jUr9TU/Qr6cf9tveCX4XSQRjbgbME\nHMUfpIBvFSDJ3gyICh3WZlXi/EjJKSZp4A==\n-----END CERTIFICATE-----\n",
@@ -30243,7 +30618,7 @@ module.exports={
   "Entrust Root Certification Authority - EC1": "-----BEGIN CERTIFICATE-----\nMIIC+TCCAoCgAwIBAgINAKaLeSkAAAAAUNCR+TAKBggqhkjOPQQDAzCBvzELMAkGA1UEBhMC\nVVMxFjAUBgNVBAoTDUVudHJ1c3QsIEluYy4xKDAmBgNVBAsTH1NlZSB3d3cuZW50cnVzdC5u\nZXQvbGVnYWwtdGVybXMxOTA3BgNVBAsTMChjKSAyMDEyIEVudHJ1c3QsIEluYy4gLSBmb3Ig\nYXV0aG9yaXplZCB1c2Ugb25seTEzMDEGA1UEAxMqRW50cnVzdCBSb290IENlcnRpZmljYXRp\nb24gQXV0aG9yaXR5IC0gRUMxMB4XDTEyMTIxODE1MjUzNloXDTM3MTIxODE1NTUzNlowgb8x\nCzAJBgNVBAYTAlVTMRYwFAYDVQQKEw1FbnRydXN0LCBJbmMuMSgwJgYDVQQLEx9TZWUgd3d3\nLmVudHJ1c3QubmV0L2xlZ2FsLXRlcm1zMTkwNwYDVQQLEzAoYykgMjAxMiBFbnRydXN0LCBJ\nbmMuIC0gZm9yIGF1dGhvcml6ZWQgdXNlIG9ubHkxMzAxBgNVBAMTKkVudHJ1c3QgUm9vdCBD\nZXJ0aWZpY2F0aW9uIEF1dGhvcml0eSAtIEVDMTB2MBAGByqGSM49AgEGBSuBBAAiA2IABIQT\nydC6bUF74mzQ61VfZgIaJPRbiWlH47jCffHyAsWfoPZb1YsGGYZPUxBtByQnoaD41UcZYUx9\nypMn6nQM72+WCf5j7HBdNq1nd67JnXxVRDqiY1Ef9eNi1KlHBz7MIKNCMEAwDgYDVR0PAQH/\nBAQDAgEGMA8GA1UdEwEB/wQFMAMBAf8wHQYDVR0OBBYEFLdj5xrdjekIplWDpOBqUEFlEUJJ\nMAoGCCqGSM49BAMDA2cAMGQCMGF52OVCR98crlOZF7ZvHH3hvxGU0QOIdeSNiaSKd0bebWHv\nAvX7td/M/k7//qnmpwIwW5nXhTcGtXsI/esni0qU+eH6p44mCOh8kmhtc9hvJqwhAriZtyZB\nWyVgrtBIGu4G\n-----END CERTIFICATE-----\n",
   "CFCA EV ROOT": "-----BEGIN CERTIFICATE-----\nMIIFjTCCA3WgAwIBAgIEGErM1jANBgkqhkiG9w0BAQsFADBWMQswCQYDVQQGEwJDTjEwMC4G\nA1UECgwnQ2hpbmEgRmluYW5jaWFsIENlcnRpZmljYXRpb24gQXV0aG9yaXR5MRUwEwYDVQQD\nDAxDRkNBIEVWIFJPT1QwHhcNMTIwODA4MDMwNzAxWhcNMjkxMjMxMDMwNzAxWjBWMQswCQYD\nVQQGEwJDTjEwMC4GA1UECgwnQ2hpbmEgRmluYW5jaWFsIENlcnRpZmljYXRpb24gQXV0aG9y\naXR5MRUwEwYDVQQDDAxDRkNBIEVWIFJPT1QwggIiMA0GCSqGSIb3DQEBAQUAA4ICDwAwggIK\nAoICAQDXXWvNED8fBVnVBU03sQ7smCuOFR36k0sXgiFxEFLXUWRwFsJVaU2OFW2fvwwbwuCj\nZ9YMrM8irq93VCpLTIpTUnrD7i7es3ElweldPe6hL6P3KjzJIx1qqx2hp/Hz7KDVRM8Vz3Iv\nHWOX6Jn5/ZOkVIBMUtRSqy5J35DNuF++P96hyk0g1CXohClTt7GIH//62pCfCqktQT+x8Rgp\n7hZZLDRJGqgG16iI0gNyejLi6mhNbiyWZXvKWfry4t3uMCz7zEasxGPrb382KzRzEpR/38wm\nnvFyXVBlWY9ps4deMm/DGIq1lY+wejfeWkU7xzbh72fROdOXW3NiGUgthxwG+3SYIElz8AXS\nG7Ggo7cbcNOIabla1jj0Ytwli3i/+Oh+uFzJlU9fpy25IGvPa931DfSCt/SyZi4QKPaXWnuW\nFo8BGS1sbn85WAZkgwGDg8NNkt0yxoekN+kWzqotaK8KgWU6cMGbrU1tVMoqLUuFG7OA5nBF\nDWteNfB/O7ic5ARwiRIlk9oKmSJgamNgTnYGmE69g60dWIolhdLHZR4tjsbftsbhf4oEIRUp\ndPA+nJCdDC7xij5aqgwJHsfVPKPtl8MeNPo4+QgO48BdK4PRVmrJtqhUUy54Mmc9gn900Pvh\ntgVguXDbjgv5E1hvcWAQUhC5wUEJ73IfZzF4/5YFjQIDAQABo2MwYTAfBgNVHSMEGDAWgBTj\n/i39KNALtbq2osS/BqoFjJP7LzAPBgNVHRMBAf8EBTADAQH/MA4GA1UdDwEB/wQEAwIBBjAd\nBgNVHQ4EFgQU4/4t/SjQC7W6tqLEvwaqBYyT+y8wDQYJKoZIhvcNAQELBQADggIBACXGumvr\nh8vegjmWPfBEp2uEcwPenStPuiB/vHiyz5ewG5zz13ku9Ui20vsXiObTej/tUxPQ4i9qecsA\nIyjmHjdXNYmEwnZPNDatZ8POQQaIxffu2Bq41gt/UP+TqhdLjOztUmCypAbqTuv0axn96/Ua\n4CUqmtzHQTb3yHQFhDmVOdYLO6Qn+gjYXB74BGBSESgoA//vU2YApUo0FmZ8/Qmkrp5nGm9B\nC2sGE5uPhnEFtC+NiWYzKXZUmhH4J/qyP5Hgzg0b8zAarb8iXRvTvyUFTeGSGn+ZnzxEk8rU\nQElsgIfXBDrDMlI1Dlb4pd19xIsNER9Tyx6yF7Zod1rg1MvIB671Oi6ON7fQAUtDKXeMOZeP\nglr4UeWJoBjnaH9dCi77o0cOPaYjesYBx4/IXr9tgFa+iiS6M+qf4TIRnvHST4D2G0CvOJ4R\nUHlzEhLN5mydLIhyPDCBBpEi6lmt2hkuIsKNuYyH4Ga8cyNfIWRjgEj1oDwYPZTISEEdQLpe\n/v5WOaHIz16eGWRGENoXkbcFgKyLmZJ956LYBws2J+dIeWCKw9cTXPhyQN9Ky8+ZAAoACxGV\n2lZFA4gKn2fQ1XmxqI1AbQ3CekD6819kR5LLU7m7Wc5P/dAVUwHY3+vZ5nbv0CO7O6l5s9UC\nKc2Jo5YPSjXnTkLAdc0Hz+Ys63su\n-----END CERTIFICATE-----\n"
 }
-},{}],152:[function(require,module,exports){
+},{}],156:[function(require,module,exports){
 (function (Buffer){
 'use strict';
 
@@ -30322,7 +30697,7 @@ RootCerts.certs = certs;
 RootCerts.trusted = trusted;
 
 }).call(this,require("buffer").Buffer)
-},{"./rootcerts.json":151,"buffer":297}],153:[function(require,module,exports){
+},{"./rootcerts.json":155,"buffer":299}],157:[function(require,module,exports){
 var asn1 = exports;
 
 asn1.bignum = require('bn.js');
@@ -30333,7 +30708,7 @@ asn1.constants = require('./asn1/constants');
 asn1.decoders = require('./asn1/decoders');
 asn1.encoders = require('./asn1/encoders');
 
-},{"./asn1/api":154,"./asn1/base":156,"./asn1/constants":160,"./asn1/decoders":162,"./asn1/encoders":164,"bn.js":165}],154:[function(require,module,exports){
+},{"./asn1/api":158,"./asn1/base":160,"./asn1/constants":164,"./asn1/decoders":166,"./asn1/encoders":168,"bn.js":169}],158:[function(require,module,exports){
 var asn1 = require('../asn1');
 var util = require('util');
 var vm = require('vm');
@@ -30386,7 +30761,7 @@ Entity.prototype.encode = function encode(data, enc, /* internal */ reporter) {
   return this._getEncoder(enc).encode(data, reporter);
 };
 
-},{"../asn1":153,"util":517,"vm":518}],155:[function(require,module,exports){
+},{"../asn1":157,"util":519,"vm":520}],159:[function(require,module,exports){
 var assert = require('assert');
 var util = require('util');
 var Reporter = require('../base').Reporter;
@@ -30504,7 +30879,7 @@ EncoderBuffer.prototype.join = function join(out, offset) {
   return out;
 };
 
-},{"../base":156,"assert":282,"buffer":297,"util":517}],156:[function(require,module,exports){
+},{"../base":160,"assert":284,"buffer":299,"util":519}],160:[function(require,module,exports){
 var base = exports;
 
 base.Reporter = require('./reporter').Reporter;
@@ -30512,7 +30887,7 @@ base.DecoderBuffer = require('./buffer').DecoderBuffer;
 base.EncoderBuffer = require('./buffer').EncoderBuffer;
 base.Node = require('./node');
 
-},{"./buffer":155,"./node":157,"./reporter":158}],157:[function(require,module,exports){
+},{"./buffer":159,"./node":161,"./reporter":162}],161:[function(require,module,exports){
 var assert = require('assert');
 var Reporter = require('../base').Reporter;
 var EncoderBuffer = require('../base').EncoderBuffer;
@@ -31062,7 +31437,7 @@ Node.prototype._encodePrimitive = function encodePrimitive(tag, data) {
     throw new Error('Unsupported tag: ' + tag);
 };
 
-},{"../base":156,"assert":282}],158:[function(require,module,exports){
+},{"../base":160,"assert":284}],162:[function(require,module,exports){
 var util = require('util');
 
 function Reporter(options) {
@@ -31153,7 +31528,7 @@ ReporterError.prototype.rethrow = function rethrow(msg) {
   return this;
 };
 
-},{"util":517}],159:[function(require,module,exports){
+},{"util":519}],163:[function(require,module,exports){
 var constants = require('../constants');
 
 exports.tagClass = {
@@ -31197,7 +31572,7 @@ exports.tag = {
 };
 exports.tagByName = constants._reverse(exports.tag);
 
-},{"../constants":160}],160:[function(require,module,exports){
+},{"../constants":164}],164:[function(require,module,exports){
 var constants = exports;
 
 // Helper
@@ -31218,7 +31593,7 @@ constants._reverse = function reverse(map) {
 
 constants.der = require('./der');
 
-},{"./der":159}],161:[function(require,module,exports){
+},{"./der":163}],165:[function(require,module,exports){
 var util = require('util');
 
 var asn1 = require('../../asn1');
@@ -31516,12 +31891,12 @@ function derDecodeLen(buf, primitive, fail) {
   return len;
 }
 
-},{"../../asn1":153,"util":517}],162:[function(require,module,exports){
+},{"../../asn1":157,"util":519}],166:[function(require,module,exports){
 var decoders = exports;
 
 decoders.der = require('./der');
 
-},{"./der":161}],163:[function(require,module,exports){
+},{"./der":165}],167:[function(require,module,exports){
 var util = require('util');
 var Buffer = require('buffer').Buffer;
 
@@ -31756,12 +32131,12 @@ function encodeTag(tag, primitive, cls, reporter) {
   return res;
 }
 
-},{"../../asn1":153,"buffer":297,"util":517}],164:[function(require,module,exports){
+},{"../../asn1":157,"buffer":299,"util":519}],168:[function(require,module,exports){
 var encoders = exports;
 
 encoders.der = require('./der');
 
-},{"./der":163}],165:[function(require,module,exports){
+},{"./der":167}],169:[function(require,module,exports){
 // Utils
 
 function assert(val, msg) {
@@ -33554,7 +33929,7 @@ Mont.prototype.invm = function invm(a) {
   return res._forceRed(this);
 };
 
-},{}],166:[function(require,module,exports){
+},{}],170:[function(require,module,exports){
 try {
   var asn1 = require('asn1.js');
 } catch (e) {
@@ -33708,7 +34083,7 @@ var AttributeValue = asn1.define('AttributeValue', function() {
 });
 exports.AttributeValue = AttributeValue;
 
-},{"../..":153,"asn1.js":153}],167:[function(require,module,exports){
+},{"../..":157,"asn1.js":157}],171:[function(require,module,exports){
 (function (Buffer){
 
 var navigator = {};
@@ -34013,7 +34388,7 @@ exports.asn1 = KJUR.asn1;
 exports.jws = KJUR.jws;
 
 }).call(this,require("buffer").Buffer)
-},{"buffer":297}],168:[function(require,module,exports){
+},{"buffer":299}],172:[function(require,module,exports){
 /*
  Copyright 2013 Daniel Wirtz <dcode@dcode.io>
 
@@ -38129,7 +38504,7 @@ exports.jws = KJUR.jws;
 
 })(this);
 
-},{"bytebuffer":169,"fs":281,"path":496}],169:[function(require,module,exports){
+},{"bytebuffer":173,"fs":283,"path":498}],173:[function(require,module,exports){
 /*
  ByteBuffer.js (c) 2013-2014 Daniel Wirtz <dcode@dcode.io>
  This version of ByteBuffer.js uses an ArrayBuffer (AB) as its backing buffer and is compatible with modern browsers.
@@ -38218,7 +38593,7 @@ k.a=function(a){var b=0;return function(){return b<a.length?a.charCodeAt(b++):nu
 a>>>=0;if("number"!==typeof b||0!==b%1)throw new TypeError("Illegal end: Not an integer");b>>>=0;if(0>a||a>b||b>this.buffer.byteLength)throw new RangeError("Illegal range: 0 <= "+a+" <= "+b+" <= "+this.buffer.byteLength);}var c=this,d;try{k.d(function(){return a<b?c.view.getUint8(a++):null},d=k.c())}catch(h){if(a!==b)throw new RangeError("Illegal range: Truncated data, "+a+" != "+b);}return d()};d.fromUTF8=function(a,b,c){if(!c&&"string"!==typeof a)throw new TypeError("Illegal str: Not a string");
 var e=new d(k.b(k.a(a),!0)[1],b,c),h=0;k.e(k.a(a),function(a){e.view.setUint8(h++,a)});e.limit=h;return e};return d}"undefined"!=typeof module&&module.exports?module.exports=s(require("long")):"undefined"!==typeof define&&define.amd?define("ByteBuffer",["Math/Long"],function(l){return s(l)}):(r.dcodeIO||(r.dcodeIO={}),r.dcodeIO.ByteBuffer=s(r.dcodeIO.Long))})(this);
 
-},{"long":171}],170:[function(require,module,exports){
+},{"long":175}],174:[function(require,module,exports){
 /*
  Copyright 2013 Daniel Wirtz <dcode@dcode.io>
  Copyright 2009 The Closure Library Authors. All Rights Reserved.
@@ -39152,7 +39527,7 @@ var e=new d(k.b(k.a(a),!0)[1],b,c),h=0;k.e(k.a(a),function(a){e.view.setUint8(h+
 
 })(this);
 
-},{}],171:[function(require,module,exports){
+},{}],175:[function(require,module,exports){
 /*
  Copyright 2013 Daniel Wirtz <dcode@dcode.io>
  Copyright 2009 The Closure Library Authors. All Rights Reserved.
@@ -39172,896 +39547,7 @@ var e=new d(k.b(k.a(a),!0)[1],b,c),h=0;k.e(k.a(a),function(a){e.view.setUint8(h+
 
 module.exports = require("./dist/Long.js");
 
-},{"./dist/Long.js":170}],172:[function(require,module,exports){
-var utils = module.exports = require('./lib/walletutils');
-utils.Bitcore = require('bitcore-lib');
-
-
-},{"./lib/walletutils":173,"bitcore-lib":61}],173:[function(require,module,exports){
-(function (Buffer){
-'use strict';
-
-var _ = require('lodash');
-var $ = require('preconditions').singleton();
-var sjcl = require('sjcl');
-var Stringify = require('json-stable-stringify');
-
-var Bitcore = require('bitcore-lib');
-var Address = Bitcore.Address;
-var PrivateKey = Bitcore.PrivateKey;
-var PublicKey = Bitcore.PublicKey;
-var crypto = Bitcore.crypto;
-var encoding = Bitcore.encoding;
-
-function WalletUtils() {};
-
-WalletUtils.SCRIPT_TYPES = {
-  P2SH: 'P2SH',
-  P2PKH: 'P2PKH',
-};
-WalletUtils.DERIVATION_STRATEGIES = {
-  BIP44: 'BIP44',
-  BIP45: 'BIP45',
-};
-WalletUtils.PATHS = {
-  REQUEST_KEY: "m/1'/0",
-  TXPROPOSAL_KEY: "m/1'/1",
-  REQUEST_KEY_AUTH: "m/2", // relative to BASE_
-};
-
-WalletUtils.DEFAULT_FEE_PER_KB = 10000;
-WalletUtils.MIN_FEE_PER_KB = 0;
-WalletUtils.MAX_FEE_PER_KB = 1000000;
-WalletUtils.MAX_TX_FEE = 1 * 1e8;
-
-/* TODO: It would be nice to be compatible with bitcoind signmessage. How
- * the hash is calculated there? */
-WalletUtils.hashMessage = function(text) {
-  $.checkArgument(text);
-  var buf = new Buffer(text);
-  var ret = crypto.Hash.sha256sha256(buf);
-  ret = new Bitcore.encoding.BufferReader(ret).readReverse();
-  return ret;
-};
-
-
-WalletUtils.signMessage = function(text, privKey) {
-  $.checkArgument(text);
-  var priv = new PrivateKey(privKey);
-  var hash = WalletUtils.hashMessage(text);
-  return crypto.ECDSA.sign(hash, priv, 'little').toString();
-};
-
-
-WalletUtils.verifyMessage = function(text, signature, pubKey) {
-  $.checkArgument(text);
-  $.checkArgument(pubKey);
-
-  if (!signature)
-    return false;
-
-  var pub = new PublicKey(pubKey);
-  var hash = WalletUtils.hashMessage(text);
-
-  try {
-    var sig = new crypto.Signature.fromString(signature);
-    return crypto.ECDSA.verify(hash, sig, pub, 'little');
-  } catch (e) {
-    return false;
-  }
-};
-
-WalletUtils.deriveAddress = function(scriptType, publicKeyRing, path, m, network) {
-  $.checkArgument(_.contains(_.values(WalletUtils.SCRIPT_TYPES), scriptType));
-
-  var publicKeys = _.map(publicKeyRing, function(item) {
-    var xpub = new Bitcore.HDPublicKey(item.xPubKey);
-    return xpub.derive(path).publicKey;
-  });
-
-  var bitcoreAddress;
-  switch (scriptType) {
-    case WalletUtils.SCRIPT_TYPES.P2SH:
-      bitcoreAddress = Address.createMultisig(publicKeys, m, network);
-      break;
-    case WalletUtils.SCRIPT_TYPES.P2PKH:
-      $.checkState(_.isArray(publicKeys) && publicKeys.length == 1);
-      bitcoreAddress = Address.fromPublicKey(publicKeys[0], network);
-      break;
-  }
-
-  return {
-    address: bitcoreAddress.toString(),
-    path: path,
-    publicKeys: _.invoke(publicKeys, 'toString'),
-  };
-};
-
-WalletUtils.getProposalHash = function(proposalHeader) {
-  function getOldHash(toAddress, amount, message, payProUrl) {
-    return [toAddress, amount, (message || ''), (payProUrl || '')].join('|');
-  };
-
-  // For backwards compatibility
-  if (arguments.length > 1) {
-    return getOldHash.apply(this, arguments);
-  }
-
-  return Stringify(proposalHeader);
-};
-
-WalletUtils.getCopayerHash = function(name, xPubKey, requestPubKey) {
-  return [name, xPubKey, requestPubKey].join('|');
-};
-
-WalletUtils.xPubToCopayerId = function(xpub) {
-  var hash = sjcl.hash.sha256.hash(xpub);
-  return sjcl.codec.hex.fromBits(hash);
-};
-
-WalletUtils.toSecret = function(walletId, walletPrivKey, network) {
-  if (_.isString(walletPrivKey)) {
-    walletPrivKey = Bitcore.PrivateKey.fromString(walletPrivKey);
-  }
-  var widHex = new Buffer(walletId.replace(/-/g, ''), 'hex');
-  var widBase58 = new encoding.Base58(widHex).toString();
-  return _.padRight(widBase58, 22, '0') + walletPrivKey.toWIF() + (network == 'testnet' ? 'T' : 'L');
-};
-
-WalletUtils.fromSecret = function(secret) {
-  $.checkArgument(secret);
-
-  function split(str, indexes) {
-    var parts = [];
-    indexes.push(str.length);
-    var i = 0;
-    while (i < indexes.length) {
-      parts.push(str.substring(i == 0 ? 0 : indexes[i - 1], indexes[i]));
-      i++;
-    };
-    return parts;
-  };
-
-  try {
-    var secretSplit = split(secret, [22, 74]);
-    var widBase58 = secretSplit[0].replace(/0/g, '');
-    var widHex = encoding.Base58.decode(widBase58).toString('hex');
-    var walletId = split(widHex, [8, 12, 16, 20]).join('-');
-
-    var walletPrivKey = Bitcore.PrivateKey.fromString(secretSplit[1]);
-    var networkChar = secretSplit[2];
-
-    return {
-      walletId: walletId,
-      walletPrivKey: walletPrivKey,
-      network: networkChar == 'T' ? 'testnet' : 'livenet',
-    };
-  } catch (ex) {
-    throw new Error('Invalid secret');
-  }
-};
-
-
-WalletUtils.encryptMessage = function(message, encryptingKey) {
-  var key = sjcl.codec.base64.toBits(encryptingKey);
-  return sjcl.encrypt(key, message, {
-    ks: 128,
-    iter: 1,
-  });
-};
-
-WalletUtils.decryptMessage = function(cyphertextJson, encryptingKey) {
-  var key = sjcl.codec.base64.toBits(encryptingKey);
-  return sjcl.decrypt(key, cyphertextJson);
-};
-
-WalletUtils.privateKeyToAESKey = function(privKey) {
-  $.checkArgument(privKey && _.isString(privKey));
-  $.checkArgument(Bitcore.PrivateKey.isValid(privKey), 'The private key received is invalid');
-  var pk = Bitcore.PrivateKey.fromString(privKey);
-  return Bitcore.crypto.Hash.sha256(pk.toBuffer()).slice(0, 16).toString('base64');
-};
-
-WalletUtils.newBitcoreTransaction = function() {
-  return new Bitcore.Transaction();
-};
-
-WalletUtils.buildTx = function(txp) {
-  var t = WalletUtils.newBitcoreTransaction();
-
-  $.checkState(_.contains(_.values(WalletUtils.SCRIPT_TYPES), txp.addressType));
-
-  switch (txp.addressType) {
-    case WalletUtils.SCRIPT_TYPES.P2SH:
-      _.each(txp.inputs, function(i) {
-        t.from(i, i.publicKeys, txp.requiredSignatures);
-      });
-      break;
-    case WalletUtils.SCRIPT_TYPES.P2PKH:
-      t.from(txp.inputs);
-      break;
-  }
-
-  if (txp.toAddress && txp.amount && !txp.outputs) {
-    t.to(txp.toAddress, txp.amount);
-  } else if (txp.outputs) {
-    _.each(txp.outputs, function(o) {
-      $.checkState(!o.script != !o.toAddress, 'Output should have either toAddress or script specified');
-      if (o.script) {
-        t.addOutput(new Bitcore.Transaction.Output({
-          script: o.script,
-          satoshis: o.amount
-        }));
-      } else {
-        t.to(o.toAddress, o.amount);
-      }
-    });
-  }
-
-  if (_.startsWith(txp.version, '1.')) {
-    Bitcore.Transaction.FEE_SECURITY_MARGIN = 1;
-    t.feePerKb(txp.feePerKb);
-  } else {
-    t.fee(txp.fee);
-  }
-
-  t.change(txp.changeAddress.address);
-
-  // Shuffle outputs for improved privacy
-  if (t.outputs.length > 1) {
-    $.checkState(t.outputs.length == txp.outputOrder.length);
-    t.sortOutputs(function(outputs) {
-      return _.map(txp.outputOrder, function(i) {
-        return outputs[i];
-      });
-    });
-  }
-
-  // Validate inputs vs outputs independently of Bitcore
-  var totalInputs = _.reduce(txp.inputs, function(memo, i) {
-    return +i.satoshis + memo;
-  }, 0);
-  var totalOutputs = _.reduce(t.outputs, function(memo, o) {
-    return +o.satoshis + memo;
-  }, 0);
-
-  $.checkState(totalInputs - totalOutputs <= WalletUtils.MAX_TX_FEE);
-
-  return t;
-};
-
-WalletUtils.getBaseAddressDerivationPath = function(derivationStrategy, network, account) {
-  $.checkArgument(_.contains(_.values(WalletUtils.DERIVATION_STRATEGIES), derivationStrategy));
-
-  if (derivationStrategy == WalletUtils.DERIVATION_STRATEGIES.BIP45) return "m/45'";
-
-  $.checkArgument(_.contains(['livenet', 'testnet'], network));
-  $.shouldBeNumber(account);
-  return "m/44'/" + (network == 'livenet' ? "0'" : "1'") + "/" + account + "'";
-};
-
-WalletUtils.deriveXPrivFromMaster = function(masterXPriv, derivationStrategy, network, account) {
-  var path = WalletUtils.getBaseAddressDerivationPath(derivationStrategy, network, account || 0);
-  return new Bitcore.HDPrivateKey(masterXPriv, network).derive(path);
-};
-
-WalletUtils.signTxp = function(txp, xPrivKey) {
-  var self = this;
-
-  $.checkArgument(txp);
-  $.checkArgument(xPrivKey);
-  $.checkArgument(txp.amount || (txp.outputs && txp.outputs[0].amount), 'amount is invalid');
-  $.checkArgument(txp.changeAddress && txp.changeAddress.address, 'changeAddress is invalid');
-
-  $.checkState(_.contains(_.values(WalletUtils.DERIVATION_STRATEGIES), txp.derivationStrategy));
-
-  //Derive proper key to sign, for each input
-  var privs = [];
-  var derived = {};
-
-  var network = new Bitcore.Address(txp.changeAddress.address).network.name;
-  var xpriv = WalletUtils.deriveXPrivFromMaster(xPrivKey, txp.derivationStrategy, network);
-
-  _.each(txp.inputs, function(i) {
-    if (!derived[i.path]) {
-      derived[i.path] = xpriv.derive(i.path).privateKey;
-      privs.push(derived[i.path]);
-    }
-  });
-
-  var t = WalletUtils.buildTx(txp);
-
-  var signatures = _.map(privs, function(priv, i) {
-    return t.getSignatures(priv);
-  });
-
-  signatures = _.map(_.sortBy(_.flatten(signatures), 'inputIndex'), function(s) {
-    return s.signature.toDER().toString('hex');
-  });
-
-  return signatures;
-};
-
-// Get network from extended private key or extended public key
-WalletUtils.getNetworkFromExtendedKey = function(xKey) {
-  $.checkArgument(xKey && _.isString(xKey));
-  return xKey.charAt(0) == 't' ? 'testnet' : 'livenet';
-};
-
-var _UNITS = {
-  btc: {
-    toSatoshis: 100000000,
-    maxDecimals: 6,
-    minDecimals: 2,
-  },
-  bit: {
-    toSatoshis: 100,
-    maxDecimals: 0,
-    minDecimals: 0,
-  },
-};
-
-WalletUtils.formatAmount = function(satoshis, unit, opts) {
-  $.shouldBeNumber(satoshis);
-  $.checkArgument(_.contains(_.keys(_UNITS), unit));
-
-  function addSeparators(nStr, thousands, decimal, minDecimals) {
-    nStr = nStr.replace('.', decimal);
-    var x = nStr.split(decimal);
-    var x0 = x[0];
-    var x1 = x[1];
-
-    x1 = _.dropRightWhile(x1, function(n, i) {
-      return n == '0' && i >= minDecimals;
-    }).join('');
-    var x2 = x.length > 1 ? decimal + x1 : '';
-
-    x0 = x0.replace(/\B(?=(\d{3})+(?!\d))/g, thousands);
-    return x0 + x2;
-  }
-
-  opts = opts || {};
-
-  var u = _UNITS[unit];
-  var amount = (satoshis / u.toSatoshis).toFixed(u.maxDecimals);
-  return addSeparators(amount, opts.thousandsSeparator || ',', opts.decimalSeparator || '.', u.minDecimals);
-};
-
-
-WalletUtils.signRequestPubKey = function(requestPubKey, xPrivKey) {
-  var priv = new Bitcore.HDPrivateKey(xPrivKey).derive(WalletUtils.PATHS.REQUEST_KEY_AUTH).privateKey;
-  return WalletUtils.signMessage(requestPubKey, priv);
-};
-
-WalletUtils.verifyRequestPubKey = function(requestPubKey, signature, xPubKey) {
-  var pub = (new Bitcore.HDPublicKey(xPubKey)).derive(WalletUtils.PATHS.REQUEST_KEY_AUTH).publicKey;
-  return WalletUtils.verifyMessage(requestPubKey, signature, pub.toString());
-};
-
-module.exports = WalletUtils;
-
-}).call(this,require("buffer").Buffer)
-},{"bitcore-lib":61,"buffer":297,"json-stable-stringify":174,"lodash":179,"preconditions":180,"sjcl":279}],174:[function(require,module,exports){
-var json = typeof JSON !== 'undefined' ? JSON : require('jsonify');
-
-module.exports = function (obj, opts) {
-    if (!opts) opts = {};
-    if (typeof opts === 'function') opts = { cmp: opts };
-    var space = opts.space || '';
-    if (typeof space === 'number') space = Array(space+1).join(' ');
-    var cycles = (typeof opts.cycles === 'boolean') ? opts.cycles : false;
-    var replacer = opts.replacer || function(key, value) { return value; };
-
-    var cmp = opts.cmp && (function (f) {
-        return function (node) {
-            return function (a, b) {
-                var aobj = { key: a, value: node[a] };
-                var bobj = { key: b, value: node[b] };
-                return f(aobj, bobj);
-            };
-        };
-    })(opts.cmp);
-
-    var seen = [];
-    return (function stringify (parent, key, node, level) {
-        var indent = space ? ('\n' + new Array(level + 1).join(space)) : '';
-        var colonSeparator = space ? ': ' : ':';
-
-        if (node && node.toJSON && typeof node.toJSON === 'function') {
-            node = node.toJSON();
-        }
-
-        node = replacer.call(parent, key, node);
-
-        if (node === undefined) {
-            return;
-        }
-        if (typeof node !== 'object' || node === null) {
-            return json.stringify(node);
-        }
-        if (isArray(node)) {
-            var out = [];
-            for (var i = 0; i < node.length; i++) {
-                var item = stringify(node, i, node[i], level+1) || json.stringify(null);
-                out.push(indent + space + item);
-            }
-            return '[' + out.join(',') + indent + ']';
-        }
-        else {
-            if (seen.indexOf(node) !== -1) {
-                if (cycles) return json.stringify('__cycle__');
-                throw new TypeError('Converting circular structure to JSON');
-            }
-            else seen.push(node);
-
-            var keys = objectKeys(node).sort(cmp && cmp(node));
-            var out = [];
-            for (var i = 0; i < keys.length; i++) {
-                var key = keys[i];
-                var value = stringify(node, key, node[key], level+1);
-
-                if(!value) continue;
-
-                var keyValue = json.stringify(key)
-                    + colonSeparator
-                    + value;
-                ;
-                out.push(indent + space + keyValue);
-            }
-            return '{' + out.join(',') + indent + '}';
-        }
-    })({ '': obj }, '', obj, 0);
-};
-
-var isArray = Array.isArray || function (x) {
-    return {}.toString.call(x) === '[object Array]';
-};
-
-var objectKeys = Object.keys || function (obj) {
-    var has = Object.prototype.hasOwnProperty || function () { return true };
-    var keys = [];
-    for (var key in obj) {
-        if (has.call(obj, key)) keys.push(key);
-    }
-    return keys;
-};
-
-},{"jsonify":175}],175:[function(require,module,exports){
-exports.parse = require('./lib/parse');
-exports.stringify = require('./lib/stringify');
-
-},{"./lib/parse":176,"./lib/stringify":177}],176:[function(require,module,exports){
-var at, // The index of the current character
-    ch, // The current character
-    escapee = {
-        '"':  '"',
-        '\\': '\\',
-        '/':  '/',
-        b:    '\b',
-        f:    '\f',
-        n:    '\n',
-        r:    '\r',
-        t:    '\t'
-    },
-    text,
-
-    error = function (m) {
-        // Call error when something is wrong.
-        throw {
-            name:    'SyntaxError',
-            message: m,
-            at:      at,
-            text:    text
-        };
-    },
-    
-    next = function (c) {
-        // If a c parameter is provided, verify that it matches the current character.
-        if (c && c !== ch) {
-            error("Expected '" + c + "' instead of '" + ch + "'");
-        }
-        
-        // Get the next character. When there are no more characters,
-        // return the empty string.
-        
-        ch = text.charAt(at);
-        at += 1;
-        return ch;
-    },
-    
-    number = function () {
-        // Parse a number value.
-        var number,
-            string = '';
-        
-        if (ch === '-') {
-            string = '-';
-            next('-');
-        }
-        while (ch >= '0' && ch <= '9') {
-            string += ch;
-            next();
-        }
-        if (ch === '.') {
-            string += '.';
-            while (next() && ch >= '0' && ch <= '9') {
-                string += ch;
-            }
-        }
-        if (ch === 'e' || ch === 'E') {
-            string += ch;
-            next();
-            if (ch === '-' || ch === '+') {
-                string += ch;
-                next();
-            }
-            while (ch >= '0' && ch <= '9') {
-                string += ch;
-                next();
-            }
-        }
-        number = +string;
-        if (!isFinite(number)) {
-            error("Bad number");
-        } else {
-            return number;
-        }
-    },
-    
-    string = function () {
-        // Parse a string value.
-        var hex,
-            i,
-            string = '',
-            uffff;
-        
-        // When parsing for string values, we must look for " and \ characters.
-        if (ch === '"') {
-            while (next()) {
-                if (ch === '"') {
-                    next();
-                    return string;
-                } else if (ch === '\\') {
-                    next();
-                    if (ch === 'u') {
-                        uffff = 0;
-                        for (i = 0; i < 4; i += 1) {
-                            hex = parseInt(next(), 16);
-                            if (!isFinite(hex)) {
-                                break;
-                            }
-                            uffff = uffff * 16 + hex;
-                        }
-                        string += String.fromCharCode(uffff);
-                    } else if (typeof escapee[ch] === 'string') {
-                        string += escapee[ch];
-                    } else {
-                        break;
-                    }
-                } else {
-                    string += ch;
-                }
-            }
-        }
-        error("Bad string");
-    },
-
-    white = function () {
-
-// Skip whitespace.
-
-        while (ch && ch <= ' ') {
-            next();
-        }
-    },
-
-    word = function () {
-
-// true, false, or null.
-
-        switch (ch) {
-        case 't':
-            next('t');
-            next('r');
-            next('u');
-            next('e');
-            return true;
-        case 'f':
-            next('f');
-            next('a');
-            next('l');
-            next('s');
-            next('e');
-            return false;
-        case 'n':
-            next('n');
-            next('u');
-            next('l');
-            next('l');
-            return null;
-        }
-        error("Unexpected '" + ch + "'");
-    },
-
-    value,  // Place holder for the value function.
-
-    array = function () {
-
-// Parse an array value.
-
-        var array = [];
-
-        if (ch === '[') {
-            next('[');
-            white();
-            if (ch === ']') {
-                next(']');
-                return array;   // empty array
-            }
-            while (ch) {
-                array.push(value());
-                white();
-                if (ch === ']') {
-                    next(']');
-                    return array;
-                }
-                next(',');
-                white();
-            }
-        }
-        error("Bad array");
-    },
-
-    object = function () {
-
-// Parse an object value.
-
-        var key,
-            object = {};
-
-        if (ch === '{') {
-            next('{');
-            white();
-            if (ch === '}') {
-                next('}');
-                return object;   // empty object
-            }
-            while (ch) {
-                key = string();
-                white();
-                next(':');
-                if (Object.hasOwnProperty.call(object, key)) {
-                    error('Duplicate key "' + key + '"');
-                }
-                object[key] = value();
-                white();
-                if (ch === '}') {
-                    next('}');
-                    return object;
-                }
-                next(',');
-                white();
-            }
-        }
-        error("Bad object");
-    };
-
-value = function () {
-
-// Parse a JSON value. It could be an object, an array, a string, a number,
-// or a word.
-
-    white();
-    switch (ch) {
-    case '{':
-        return object();
-    case '[':
-        return array();
-    case '"':
-        return string();
-    case '-':
-        return number();
-    default:
-        return ch >= '0' && ch <= '9' ? number() : word();
-    }
-};
-
-// Return the json_parse function. It will have access to all of the above
-// functions and variables.
-
-module.exports = function (source, reviver) {
-    var result;
-    
-    text = source;
-    at = 0;
-    ch = ' ';
-    result = value();
-    white();
-    if (ch) {
-        error("Syntax error");
-    }
-
-    // If there is a reviver function, we recursively walk the new structure,
-    // passing each name/value pair to the reviver function for possible
-    // transformation, starting with a temporary root object that holds the result
-    // in an empty key. If there is not a reviver function, we simply return the
-    // result.
-
-    return typeof reviver === 'function' ? (function walk(holder, key) {
-        var k, v, value = holder[key];
-        if (value && typeof value === 'object') {
-            for (k in value) {
-                if (Object.prototype.hasOwnProperty.call(value, k)) {
-                    v = walk(value, k);
-                    if (v !== undefined) {
-                        value[k] = v;
-                    } else {
-                        delete value[k];
-                    }
-                }
-            }
-        }
-        return reviver.call(holder, key, value);
-    }({'': result}, '')) : result;
-};
-
-},{}],177:[function(require,module,exports){
-var cx = /[\u0000\u00ad\u0600-\u0604\u070f\u17b4\u17b5\u200c-\u200f\u2028-\u202f\u2060-\u206f\ufeff\ufff0-\uffff]/g,
-    escapable = /[\\\"\x00-\x1f\x7f-\x9f\u00ad\u0600-\u0604\u070f\u17b4\u17b5\u200c-\u200f\u2028-\u202f\u2060-\u206f\ufeff\ufff0-\uffff]/g,
-    gap,
-    indent,
-    meta = {    // table of character substitutions
-        '\b': '\\b',
-        '\t': '\\t',
-        '\n': '\\n',
-        '\f': '\\f',
-        '\r': '\\r',
-        '"' : '\\"',
-        '\\': '\\\\'
-    },
-    rep;
-
-function quote(string) {
-    // If the string contains no control characters, no quote characters, and no
-    // backslash characters, then we can safely slap some quotes around it.
-    // Otherwise we must also replace the offending characters with safe escape
-    // sequences.
-    
-    escapable.lastIndex = 0;
-    return escapable.test(string) ? '"' + string.replace(escapable, function (a) {
-        var c = meta[a];
-        return typeof c === 'string' ? c :
-            '\\u' + ('0000' + a.charCodeAt(0).toString(16)).slice(-4);
-    }) + '"' : '"' + string + '"';
-}
-
-function str(key, holder) {
-    // Produce a string from holder[key].
-    var i,          // The loop counter.
-        k,          // The member key.
-        v,          // The member value.
-        length,
-        mind = gap,
-        partial,
-        value = holder[key];
-    
-    // If the value has a toJSON method, call it to obtain a replacement value.
-    if (value && typeof value === 'object' &&
-            typeof value.toJSON === 'function') {
-        value = value.toJSON(key);
-    }
-    
-    // If we were called with a replacer function, then call the replacer to
-    // obtain a replacement value.
-    if (typeof rep === 'function') {
-        value = rep.call(holder, key, value);
-    }
-    
-    // What happens next depends on the value's type.
-    switch (typeof value) {
-        case 'string':
-            return quote(value);
-        
-        case 'number':
-            // JSON numbers must be finite. Encode non-finite numbers as null.
-            return isFinite(value) ? String(value) : 'null';
-        
-        case 'boolean':
-        case 'null':
-            // If the value is a boolean or null, convert it to a string. Note:
-            // typeof null does not produce 'null'. The case is included here in
-            // the remote chance that this gets fixed someday.
-            return String(value);
-            
-        case 'object':
-            if (!value) return 'null';
-            gap += indent;
-            partial = [];
-            
-            // Array.isArray
-            if (Object.prototype.toString.apply(value) === '[object Array]') {
-                length = value.length;
-                for (i = 0; i < length; i += 1) {
-                    partial[i] = str(i, value) || 'null';
-                }
-                
-                // Join all of the elements together, separated with commas, and
-                // wrap them in brackets.
-                v = partial.length === 0 ? '[]' : gap ?
-                    '[\n' + gap + partial.join(',\n' + gap) + '\n' + mind + ']' :
-                    '[' + partial.join(',') + ']';
-                gap = mind;
-                return v;
-            }
-            
-            // If the replacer is an array, use it to select the members to be
-            // stringified.
-            if (rep && typeof rep === 'object') {
-                length = rep.length;
-                for (i = 0; i < length; i += 1) {
-                    k = rep[i];
-                    if (typeof k === 'string') {
-                        v = str(k, value);
-                        if (v) {
-                            partial.push(quote(k) + (gap ? ': ' : ':') + v);
-                        }
-                    }
-                }
-            }
-            else {
-                // Otherwise, iterate through all of the keys in the object.
-                for (k in value) {
-                    if (Object.prototype.hasOwnProperty.call(value, k)) {
-                        v = str(k, value);
-                        if (v) {
-                            partial.push(quote(k) + (gap ? ': ' : ':') + v);
-                        }
-                    }
-                }
-            }
-            
-        // Join all of the member texts together, separated with commas,
-        // and wrap them in braces.
-
-        v = partial.length === 0 ? '{}' : gap ?
-            '{\n' + gap + partial.join(',\n' + gap) + '\n' + mind + '}' :
-            '{' + partial.join(',') + '}';
-        gap = mind;
-        return v;
-    }
-}
-
-module.exports = function (value, replacer, space) {
-    var i;
-    gap = '';
-    indent = '';
-    
-    // If the space parameter is a number, make an indent string containing that
-    // many spaces.
-    if (typeof space === 'number') {
-        for (i = 0; i < space; i += 1) {
-            indent += ' ';
-        }
-    }
-    // If the space parameter is a string, it will be used as the indent string.
-    else if (typeof space === 'string') {
-        indent = space;
-    }
-
-    // If there is a replacer, it must be a function or an array.
-    // Otherwise, throw an error.
-    rep = replacer;
-    if (replacer && typeof replacer !== 'function'
-    && (typeof replacer !== 'object' || typeof replacer.length !== 'number')) {
-        throw new Error('JSON.stringify');
-    }
-    
-    // Make a fake root object containing our value under the key of ''.
-    // Return the result of stringifying the value.
-    return str('', {'': value});
-};
-
-},{}],178:[function(require,module,exports){
+},{"./dist/Long.js":174}],176:[function(require,module,exports){
 // Browser Request
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -40557,7 +40043,527 @@ function b64_enc (data) {
 }));
 //UMD FOOTER END
 
-},{}],179:[function(require,module,exports){
+},{}],177:[function(require,module,exports){
+var json = typeof JSON !== 'undefined' ? JSON : require('jsonify');
+
+module.exports = function (obj, opts) {
+    if (!opts) opts = {};
+    if (typeof opts === 'function') opts = { cmp: opts };
+    var space = opts.space || '';
+    if (typeof space === 'number') space = Array(space+1).join(' ');
+    var cycles = (typeof opts.cycles === 'boolean') ? opts.cycles : false;
+    var replacer = opts.replacer || function(key, value) { return value; };
+
+    var cmp = opts.cmp && (function (f) {
+        return function (node) {
+            return function (a, b) {
+                var aobj = { key: a, value: node[a] };
+                var bobj = { key: b, value: node[b] };
+                return f(aobj, bobj);
+            };
+        };
+    })(opts.cmp);
+
+    var seen = [];
+    return (function stringify (parent, key, node, level) {
+        var indent = space ? ('\n' + new Array(level + 1).join(space)) : '';
+        var colonSeparator = space ? ': ' : ':';
+
+        if (node && node.toJSON && typeof node.toJSON === 'function') {
+            node = node.toJSON();
+        }
+
+        node = replacer.call(parent, key, node);
+
+        if (node === undefined) {
+            return;
+        }
+        if (typeof node !== 'object' || node === null) {
+            return json.stringify(node);
+        }
+        if (isArray(node)) {
+            var out = [];
+            for (var i = 0; i < node.length; i++) {
+                var item = stringify(node, i, node[i], level+1) || json.stringify(null);
+                out.push(indent + space + item);
+            }
+            return '[' + out.join(',') + indent + ']';
+        }
+        else {
+            if (seen.indexOf(node) !== -1) {
+                if (cycles) return json.stringify('__cycle__');
+                throw new TypeError('Converting circular structure to JSON');
+            }
+            else seen.push(node);
+
+            var keys = objectKeys(node).sort(cmp && cmp(node));
+            var out = [];
+            for (var i = 0; i < keys.length; i++) {
+                var key = keys[i];
+                var value = stringify(node, key, node[key], level+1);
+
+                if(!value) continue;
+
+                var keyValue = json.stringify(key)
+                    + colonSeparator
+                    + value;
+                ;
+                out.push(indent + space + keyValue);
+            }
+            return '{' + out.join(',') + indent + '}';
+        }
+    })({ '': obj }, '', obj, 0);
+};
+
+var isArray = Array.isArray || function (x) {
+    return {}.toString.call(x) === '[object Array]';
+};
+
+var objectKeys = Object.keys || function (obj) {
+    var has = Object.prototype.hasOwnProperty || function () { return true };
+    var keys = [];
+    for (var key in obj) {
+        if (has.call(obj, key)) keys.push(key);
+    }
+    return keys;
+};
+
+},{"jsonify":178}],178:[function(require,module,exports){
+exports.parse = require('./lib/parse');
+exports.stringify = require('./lib/stringify');
+
+},{"./lib/parse":179,"./lib/stringify":180}],179:[function(require,module,exports){
+var at, // The index of the current character
+    ch, // The current character
+    escapee = {
+        '"':  '"',
+        '\\': '\\',
+        '/':  '/',
+        b:    '\b',
+        f:    '\f',
+        n:    '\n',
+        r:    '\r',
+        t:    '\t'
+    },
+    text,
+
+    error = function (m) {
+        // Call error when something is wrong.
+        throw {
+            name:    'SyntaxError',
+            message: m,
+            at:      at,
+            text:    text
+        };
+    },
+    
+    next = function (c) {
+        // If a c parameter is provided, verify that it matches the current character.
+        if (c && c !== ch) {
+            error("Expected '" + c + "' instead of '" + ch + "'");
+        }
+        
+        // Get the next character. When there are no more characters,
+        // return the empty string.
+        
+        ch = text.charAt(at);
+        at += 1;
+        return ch;
+    },
+    
+    number = function () {
+        // Parse a number value.
+        var number,
+            string = '';
+        
+        if (ch === '-') {
+            string = '-';
+            next('-');
+        }
+        while (ch >= '0' && ch <= '9') {
+            string += ch;
+            next();
+        }
+        if (ch === '.') {
+            string += '.';
+            while (next() && ch >= '0' && ch <= '9') {
+                string += ch;
+            }
+        }
+        if (ch === 'e' || ch === 'E') {
+            string += ch;
+            next();
+            if (ch === '-' || ch === '+') {
+                string += ch;
+                next();
+            }
+            while (ch >= '0' && ch <= '9') {
+                string += ch;
+                next();
+            }
+        }
+        number = +string;
+        if (!isFinite(number)) {
+            error("Bad number");
+        } else {
+            return number;
+        }
+    },
+    
+    string = function () {
+        // Parse a string value.
+        var hex,
+            i,
+            string = '',
+            uffff;
+        
+        // When parsing for string values, we must look for " and \ characters.
+        if (ch === '"') {
+            while (next()) {
+                if (ch === '"') {
+                    next();
+                    return string;
+                } else if (ch === '\\') {
+                    next();
+                    if (ch === 'u') {
+                        uffff = 0;
+                        for (i = 0; i < 4; i += 1) {
+                            hex = parseInt(next(), 16);
+                            if (!isFinite(hex)) {
+                                break;
+                            }
+                            uffff = uffff * 16 + hex;
+                        }
+                        string += String.fromCharCode(uffff);
+                    } else if (typeof escapee[ch] === 'string') {
+                        string += escapee[ch];
+                    } else {
+                        break;
+                    }
+                } else {
+                    string += ch;
+                }
+            }
+        }
+        error("Bad string");
+    },
+
+    white = function () {
+
+// Skip whitespace.
+
+        while (ch && ch <= ' ') {
+            next();
+        }
+    },
+
+    word = function () {
+
+// true, false, or null.
+
+        switch (ch) {
+        case 't':
+            next('t');
+            next('r');
+            next('u');
+            next('e');
+            return true;
+        case 'f':
+            next('f');
+            next('a');
+            next('l');
+            next('s');
+            next('e');
+            return false;
+        case 'n':
+            next('n');
+            next('u');
+            next('l');
+            next('l');
+            return null;
+        }
+        error("Unexpected '" + ch + "'");
+    },
+
+    value,  // Place holder for the value function.
+
+    array = function () {
+
+// Parse an array value.
+
+        var array = [];
+
+        if (ch === '[') {
+            next('[');
+            white();
+            if (ch === ']') {
+                next(']');
+                return array;   // empty array
+            }
+            while (ch) {
+                array.push(value());
+                white();
+                if (ch === ']') {
+                    next(']');
+                    return array;
+                }
+                next(',');
+                white();
+            }
+        }
+        error("Bad array");
+    },
+
+    object = function () {
+
+// Parse an object value.
+
+        var key,
+            object = {};
+
+        if (ch === '{') {
+            next('{');
+            white();
+            if (ch === '}') {
+                next('}');
+                return object;   // empty object
+            }
+            while (ch) {
+                key = string();
+                white();
+                next(':');
+                if (Object.hasOwnProperty.call(object, key)) {
+                    error('Duplicate key "' + key + '"');
+                }
+                object[key] = value();
+                white();
+                if (ch === '}') {
+                    next('}');
+                    return object;
+                }
+                next(',');
+                white();
+            }
+        }
+        error("Bad object");
+    };
+
+value = function () {
+
+// Parse a JSON value. It could be an object, an array, a string, a number,
+// or a word.
+
+    white();
+    switch (ch) {
+    case '{':
+        return object();
+    case '[':
+        return array();
+    case '"':
+        return string();
+    case '-':
+        return number();
+    default:
+        return ch >= '0' && ch <= '9' ? number() : word();
+    }
+};
+
+// Return the json_parse function. It will have access to all of the above
+// functions and variables.
+
+module.exports = function (source, reviver) {
+    var result;
+    
+    text = source;
+    at = 0;
+    ch = ' ';
+    result = value();
+    white();
+    if (ch) {
+        error("Syntax error");
+    }
+
+    // If there is a reviver function, we recursively walk the new structure,
+    // passing each name/value pair to the reviver function for possible
+    // transformation, starting with a temporary root object that holds the result
+    // in an empty key. If there is not a reviver function, we simply return the
+    // result.
+
+    return typeof reviver === 'function' ? (function walk(holder, key) {
+        var k, v, value = holder[key];
+        if (value && typeof value === 'object') {
+            for (k in value) {
+                if (Object.prototype.hasOwnProperty.call(value, k)) {
+                    v = walk(value, k);
+                    if (v !== undefined) {
+                        value[k] = v;
+                    } else {
+                        delete value[k];
+                    }
+                }
+            }
+        }
+        return reviver.call(holder, key, value);
+    }({'': result}, '')) : result;
+};
+
+},{}],180:[function(require,module,exports){
+var cx = /[\u0000\u00ad\u0600-\u0604\u070f\u17b4\u17b5\u200c-\u200f\u2028-\u202f\u2060-\u206f\ufeff\ufff0-\uffff]/g,
+    escapable = /[\\\"\x00-\x1f\x7f-\x9f\u00ad\u0600-\u0604\u070f\u17b4\u17b5\u200c-\u200f\u2028-\u202f\u2060-\u206f\ufeff\ufff0-\uffff]/g,
+    gap,
+    indent,
+    meta = {    // table of character substitutions
+        '\b': '\\b',
+        '\t': '\\t',
+        '\n': '\\n',
+        '\f': '\\f',
+        '\r': '\\r',
+        '"' : '\\"',
+        '\\': '\\\\'
+    },
+    rep;
+
+function quote(string) {
+    // If the string contains no control characters, no quote characters, and no
+    // backslash characters, then we can safely slap some quotes around it.
+    // Otherwise we must also replace the offending characters with safe escape
+    // sequences.
+    
+    escapable.lastIndex = 0;
+    return escapable.test(string) ? '"' + string.replace(escapable, function (a) {
+        var c = meta[a];
+        return typeof c === 'string' ? c :
+            '\\u' + ('0000' + a.charCodeAt(0).toString(16)).slice(-4);
+    }) + '"' : '"' + string + '"';
+}
+
+function str(key, holder) {
+    // Produce a string from holder[key].
+    var i,          // The loop counter.
+        k,          // The member key.
+        v,          // The member value.
+        length,
+        mind = gap,
+        partial,
+        value = holder[key];
+    
+    // If the value has a toJSON method, call it to obtain a replacement value.
+    if (value && typeof value === 'object' &&
+            typeof value.toJSON === 'function') {
+        value = value.toJSON(key);
+    }
+    
+    // If we were called with a replacer function, then call the replacer to
+    // obtain a replacement value.
+    if (typeof rep === 'function') {
+        value = rep.call(holder, key, value);
+    }
+    
+    // What happens next depends on the value's type.
+    switch (typeof value) {
+        case 'string':
+            return quote(value);
+        
+        case 'number':
+            // JSON numbers must be finite. Encode non-finite numbers as null.
+            return isFinite(value) ? String(value) : 'null';
+        
+        case 'boolean':
+        case 'null':
+            // If the value is a boolean or null, convert it to a string. Note:
+            // typeof null does not produce 'null'. The case is included here in
+            // the remote chance that this gets fixed someday.
+            return String(value);
+            
+        case 'object':
+            if (!value) return 'null';
+            gap += indent;
+            partial = [];
+            
+            // Array.isArray
+            if (Object.prototype.toString.apply(value) === '[object Array]') {
+                length = value.length;
+                for (i = 0; i < length; i += 1) {
+                    partial[i] = str(i, value) || 'null';
+                }
+                
+                // Join all of the elements together, separated with commas, and
+                // wrap them in brackets.
+                v = partial.length === 0 ? '[]' : gap ?
+                    '[\n' + gap + partial.join(',\n' + gap) + '\n' + mind + ']' :
+                    '[' + partial.join(',') + ']';
+                gap = mind;
+                return v;
+            }
+            
+            // If the replacer is an array, use it to select the members to be
+            // stringified.
+            if (rep && typeof rep === 'object') {
+                length = rep.length;
+                for (i = 0; i < length; i += 1) {
+                    k = rep[i];
+                    if (typeof k === 'string') {
+                        v = str(k, value);
+                        if (v) {
+                            partial.push(quote(k) + (gap ? ': ' : ':') + v);
+                        }
+                    }
+                }
+            }
+            else {
+                // Otherwise, iterate through all of the keys in the object.
+                for (k in value) {
+                    if (Object.prototype.hasOwnProperty.call(value, k)) {
+                        v = str(k, value);
+                        if (v) {
+                            partial.push(quote(k) + (gap ? ': ' : ':') + v);
+                        }
+                    }
+                }
+            }
+            
+        // Join all of the member texts together, separated with commas,
+        // and wrap them in braces.
+
+        v = partial.length === 0 ? '{}' : gap ?
+            '{\n' + gap + partial.join(',\n' + gap) + '\n' + mind + '}' :
+            '{' + partial.join(',') + '}';
+        gap = mind;
+        return v;
+    }
+}
+
+module.exports = function (value, replacer, space) {
+    var i;
+    gap = '';
+    indent = '';
+    
+    // If the space parameter is a number, make an indent string containing that
+    // many spaces.
+    if (typeof space === 'number') {
+        for (i = 0; i < space; i += 1) {
+            indent += ' ';
+        }
+    }
+    // If the space parameter is a string, it will be used as the indent string.
+    else if (typeof space === 'string') {
+        indent = space;
+    }
+
+    // If there is a replacer, it must be a function or an array.
+    // Otherwise, throw an error.
+    rep = replacer;
+    if (replacer && typeof replacer !== 'function'
+    && (typeof replacer !== 'object' || typeof replacer.length !== 'number')) {
+        throw new Error('JSON.stringify');
+    }
+    
+    // Make a fake root object containing our value under the key of ''.
+    // Return the result of stringifying the value.
+    return str('', {'': value});
+};
+
+},{}],181:[function(require,module,exports){
 (function (global){
 /**
  * @license
@@ -52912,9 +52918,9 @@ function b64_enc (data) {
 }.call(this));
 
 }).call(this,typeof global !== "undefined" ? global : typeof self !== "undefined" ? self : typeof window !== "undefined" ? window : {})
-},{}],180:[function(require,module,exports){
+},{}],182:[function(require,module,exports){
 module.exports = require("./src/preconditions");
-},{"./src/preconditions":183}],181:[function(require,module,exports){
+},{"./src/preconditions":185}],183:[function(require,module,exports){
 (function (global){
 /**
  * @license
@@ -59704,7 +59710,7 @@ module.exports = require("./src/preconditions");
 }.call(this));
 
 }).call(this,typeof global !== "undefined" ? global : typeof self !== "undefined" ? self : typeof window !== "undefined" ? window : {})
-},{}],182:[function(require,module,exports){
+},{}],184:[function(require,module,exports){
 exports.ShouldBeDefined = "Variable should be defined.";
 exports.ShouldBeUndefined = "Variable should be undefined.";
 
@@ -59748,7 +59754,7 @@ exports.ShouldHaveValidIndex = "Index should be between between 0 (inclusive) an
 exports.ShouldHaveValidPosition = "Index should be between index between 0 (inclusive) and size (inclusive).";
 exports.ShouldHaveValidPositions = "Start and End should be between valid sub range between 0 (inclusive) and size (inclusive).";
 exports.StartBeforeEnd = "Start value should be less than the end value.";
-},{}],183:[function(require,module,exports){
+},{}],185:[function(require,module,exports){
 "use strict";
 
 var validatorFunctions = require("./validatorFunctions"),
@@ -60016,7 +60022,7 @@ module.exports = {
   }
 
 };
-},{"./validatorFunctions":184,"lodash":181}],184:[function(require,module,exports){
+},{"./validatorFunctions":186,"lodash":183}],186:[function(require,module,exports){
 "use strict";
 
 var constants = require("./constants"),
@@ -60248,7 +60254,7 @@ var validatorFunctions = {
 };
 
 module.exports = validatorFunctions;
-},{"./constants":182,"lodash":181}],185:[function(require,module,exports){
+},{"./constants":184,"lodash":183}],187:[function(require,module,exports){
 // Copyright 2010-2012 Mikeal Rogers
 //
 //    Licensed under the Apache License, Version 2.0 (the "License");
@@ -60406,7 +60412,7 @@ Object.defineProperty(request, 'debug', {
   }
 })
 
-},{"./lib/cookies":187,"./lib/helpers":190,"./request":278,"extend":211}],186:[function(require,module,exports){
+},{"./lib/cookies":189,"./lib/helpers":192,"./request":280,"extend":213}],188:[function(require,module,exports){
 'use strict'
 
 var caseless = require('caseless')
@@ -60576,7 +60582,7 @@ Auth.prototype.onResponse = function (response) {
 
 exports.Auth = Auth
 
-},{"./helpers":190,"caseless":208,"node-uuid":263}],187:[function(require,module,exports){
+},{"./helpers":192,"caseless":210,"node-uuid":265}],189:[function(require,module,exports){
 'use strict'
 
 var tough = require('tough-cookie')
@@ -60617,7 +60623,7 @@ exports.jar = function(store) {
   return new RequestJar(store)
 }
 
-},{"tough-cookie":270}],188:[function(require,module,exports){
+},{"tough-cookie":272}],190:[function(require,module,exports){
 (function (process){
 'use strict'
 
@@ -60700,7 +60706,7 @@ function getProxyFromURI(uri) {
 module.exports = getProxyFromURI
 
 }).call(this,require('_process'))
-},{"_process":497}],189:[function(require,module,exports){
+},{"_process":499}],191:[function(require,module,exports){
 'use strict'
 
 var fs = require('fs')
@@ -60907,7 +60913,7 @@ Har.prototype.options = function (options) {
 
 exports.Har = Har
 
-},{"fs":281,"har-validator":215,"querystring":501,"util":517}],190:[function(require,module,exports){
+},{"fs":283,"har-validator":217,"querystring":503,"util":519}],192:[function(require,module,exports){
 (function (process,Buffer){
 'use strict'
 
@@ -60985,7 +60991,7 @@ exports.version               = version
 exports.defer                 = deferMethod()
 
 }).call(this,require('_process'),require("buffer").Buffer)
-},{"_process":497,"buffer":297,"crypto":301,"json-stringify-safe":259}],191:[function(require,module,exports){
+},{"_process":499,"buffer":299,"crypto":303,"json-stringify-safe":261}],193:[function(require,module,exports){
 (function (Buffer){
 'use strict'
 
@@ -61098,7 +61104,7 @@ Multipart.prototype.onRequest = function (options) {
 exports.Multipart = Multipart
 
 }).call(this,require("buffer").Buffer)
-},{"buffer":297,"combined-stream":209,"isstream":258,"node-uuid":263}],192:[function(require,module,exports){
+},{"buffer":299,"combined-stream":211,"isstream":260,"node-uuid":265}],194:[function(require,module,exports){
 (function (Buffer){
 'use strict'
 
@@ -61249,7 +61255,7 @@ OAuth.prototype.onRequest = function (_oauth) {
 exports.OAuth = OAuth
 
 }).call(this,require("buffer").Buffer)
-},{"buffer":297,"caseless":208,"crypto":301,"node-uuid":263,"oauth-sign":264,"qs":265,"url":515}],193:[function(require,module,exports){
+},{"buffer":299,"caseless":210,"crypto":303,"node-uuid":265,"oauth-sign":266,"qs":267,"url":517}],195:[function(require,module,exports){
 'use strict'
 
 var qs = require('qs')
@@ -61302,7 +61308,7 @@ Querystring.prototype.unescape = querystring.unescape
 
 exports.Querystring = Querystring
 
-},{"qs":265,"querystring":501}],194:[function(require,module,exports){
+},{"qs":267,"querystring":503}],196:[function(require,module,exports){
 'use strict'
 
 var url = require('url')
@@ -61458,7 +61464,7 @@ Redirect.prototype.onResponse = function (response) {
 
 exports.Redirect = Redirect
 
-},{"url":515}],195:[function(require,module,exports){
+},{"url":517}],197:[function(require,module,exports){
 'use strict'
 
 var url = require('url')
@@ -61643,7 +61649,7 @@ Tunnel.defaultProxyHeaderWhiteList = defaultProxyHeaderWhiteList
 Tunnel.defaultProxyHeaderExclusiveList = defaultProxyHeaderExclusiveList
 exports.Tunnel = Tunnel
 
-},{"tunnel-agent":277,"url":515}],196:[function(require,module,exports){
+},{"tunnel-agent":279,"url":517}],198:[function(require,module,exports){
 
 /*!
  *  Copyright 2010 LearnBoost <dev@learnboost.com>
@@ -61857,7 +61863,7 @@ function canonicalizeResource (resource) {
 }
 module.exports.canonicalizeResource = canonicalizeResource
 
-},{"crypto":301,"url":515}],197:[function(require,module,exports){
+},{"crypto":303,"url":517}],199:[function(require,module,exports){
 (function (Buffer){
 var DuplexStream = require('readable-stream/duplex')
   , util         = require('util')
@@ -62077,10 +62083,10 @@ BufferList.prototype.destroy = function () {
 module.exports = BufferList
 
 }).call(this,require("buffer").Buffer)
-},{"buffer":297,"readable-stream/duplex":198,"util":517}],198:[function(require,module,exports){
+},{"buffer":299,"readable-stream/duplex":200,"util":519}],200:[function(require,module,exports){
 module.exports = require("./lib/_stream_duplex.js")
 
-},{"./lib/_stream_duplex.js":199}],199:[function(require,module,exports){
+},{"./lib/_stream_duplex.js":201}],201:[function(require,module,exports){
 // a duplex stream is just a stream that is both readable and writable.
 // Since JS doesn't have multiple prototypal inheritance, this class
 // prototypally inherits from Readable, and then parasitically from
@@ -62164,7 +62170,7 @@ function forEach (xs, f) {
   }
 }
 
-},{"./_stream_readable":200,"./_stream_writable":201,"core-util-is":202,"inherits":203,"process-nextick-args":205}],200:[function(require,module,exports){
+},{"./_stream_readable":202,"./_stream_writable":203,"core-util-is":204,"inherits":205,"process-nextick-args":207}],202:[function(require,module,exports){
 (function (process){
 'use strict';
 
@@ -63141,7 +63147,7 @@ function indexOf (xs, x) {
 }
 
 }).call(this,require('_process'))
-},{"./_stream_duplex":199,"_process":497,"buffer":297,"core-util-is":202,"events":487,"inherits":203,"isarray":204,"process-nextick-args":205,"string_decoder/":206,"util":283}],201:[function(require,module,exports){
+},{"./_stream_duplex":201,"_process":499,"buffer":299,"core-util-is":204,"events":489,"inherits":205,"isarray":206,"process-nextick-args":207,"string_decoder/":208,"util":285}],203:[function(require,module,exports){
 // A bit simpler than readable streams.
 // Implement an async ._write(chunk, encoding, cb), and it'll handle all
 // the drain event emission and buffering.
@@ -63670,7 +63676,7 @@ function endWritable(stream, state, cb) {
   state.ended = true;
 }
 
-},{"./_stream_duplex":199,"buffer":297,"core-util-is":202,"events":487,"inherits":203,"process-nextick-args":205,"util-deprecate":207}],202:[function(require,module,exports){
+},{"./_stream_duplex":201,"buffer":299,"core-util-is":204,"events":489,"inherits":205,"process-nextick-args":207,"util-deprecate":209}],204:[function(require,module,exports){
 (function (Buffer){
 // Copyright Joyent, Inc. and other Node contributors.
 //
@@ -63780,14 +63786,14 @@ function objectToString(o) {
   return Object.prototype.toString.call(o);
 }
 }).call(this,{"isBuffer":require("../../../../../../../../../../browserify/node_modules/insert-module-globals/node_modules/is-buffer/index.js")})
-},{"../../../../../../../../../../browserify/node_modules/insert-module-globals/node_modules/is-buffer/index.js":494}],203:[function(require,module,exports){
-arguments[4][33][0].apply(exports,arguments)
-},{"dup":33}],204:[function(require,module,exports){
+},{"../../../../../../../../../../browserify/node_modules/insert-module-globals/node_modules/is-buffer/index.js":496}],205:[function(require,module,exports){
+arguments[4][37][0].apply(exports,arguments)
+},{"dup":37}],206:[function(require,module,exports){
 module.exports = Array.isArray || function (arr) {
   return Object.prototype.toString.call(arr) == '[object Array]';
 };
 
-},{}],205:[function(require,module,exports){
+},{}],207:[function(require,module,exports){
 (function (process){
 'use strict';
 module.exports = nextTick;
@@ -63804,7 +63810,7 @@ function nextTick(fn) {
 }
 
 }).call(this,require('_process'))
-},{"_process":497}],206:[function(require,module,exports){
+},{"_process":499}],208:[function(require,module,exports){
 // Copyright Joyent, Inc. and other Node contributors.
 //
 // Permission is hereby granted, free of charge, to any person obtaining a
@@ -64027,7 +64033,7 @@ function base64DetectIncompleteChar(buffer) {
   this.charLength = this.charReceived ? 3 : 0;
 }
 
-},{"buffer":297}],207:[function(require,module,exports){
+},{"buffer":299}],209:[function(require,module,exports){
 (function (global){
 
 /**
@@ -64098,7 +64104,7 @@ function config (name) {
 }
 
 }).call(this,typeof global !== "undefined" ? global : typeof self !== "undefined" ? self : typeof window !== "undefined" ? window : {})
-},{}],208:[function(require,module,exports){
+},{}],210:[function(require,module,exports){
 function Caseless (dict) {
   this.dict = dict || {}
 }
@@ -64166,7 +64172,7 @@ module.exports.httpify = function (resp, headers) {
   return c
 }
 
-},{}],209:[function(require,module,exports){
+},{}],211:[function(require,module,exports){
 (function (Buffer){
 var util = require('util');
 var Stream = require('stream').Stream;
@@ -64358,7 +64364,7 @@ CombinedStream.prototype._emitError = function(err) {
 };
 
 }).call(this,{"isBuffer":require("../../../../../../browserify/node_modules/insert-module-globals/node_modules/is-buffer/index.js")})
-},{"../../../../../../browserify/node_modules/insert-module-globals/node_modules/is-buffer/index.js":494,"delayed-stream":210,"stream":513,"util":517}],210:[function(require,module,exports){
+},{"../../../../../../browserify/node_modules/insert-module-globals/node_modules/is-buffer/index.js":496,"delayed-stream":212,"stream":515,"util":519}],212:[function(require,module,exports){
 var Stream = require('stream').Stream;
 var util = require('util');
 
@@ -64467,7 +64473,7 @@ DelayedStream.prototype._checkIfMaxDataSizeExceeded = function() {
   this.emit('error', new Error(message));
 };
 
-},{"stream":513,"util":517}],211:[function(require,module,exports){
+},{"stream":515,"util":519}],213:[function(require,module,exports){
 'use strict';
 
 var hasOwn = Object.prototype.hasOwnProperty;
@@ -64555,7 +64561,7 @@ module.exports = function extend() {
 };
 
 
-},{}],212:[function(require,module,exports){
+},{}],214:[function(require,module,exports){
 module.exports = ForeverAgent
 ForeverAgent.SSL = ForeverAgentSSL
 
@@ -64695,9 +64701,9 @@ function createConnectionSSL (port, host, options) {
   return tls.connect(options);
 }
 
-},{"http":488,"https":492,"net":281,"tls":281,"util":517}],213:[function(require,module,exports){
+},{"http":490,"https":494,"net":283,"tls":283,"util":519}],215:[function(require,module,exports){
 module.exports = FormData;
-},{}],214:[function(require,module,exports){
+},{}],216:[function(require,module,exports){
 'use strict'
 
 function ValidationError (errors) {
@@ -64709,7 +64715,7 @@ ValidationError.prototype = Error.prototype
 
 module.exports = ValidationError
 
-},{}],215:[function(require,module,exports){
+},{}],217:[function(require,module,exports){
 'use strict'
 
 var Promise = require('pinkie-promise')
@@ -64733,7 +64739,7 @@ Object.keys(schemas).map(function (name) {
   module.exports[name] = promisify(schemas[name])
 })
 
-},{"./runner":216,"./schemas":224,"pinkie-promise":240}],216:[function(require,module,exports){
+},{"./runner":218,"./schemas":226,"pinkie-promise":242}],218:[function(require,module,exports){
 'use strict'
 
 var schemas = require('./schemas')
@@ -64764,7 +64770,7 @@ module.exports = function (schema, data, cb) {
   return valid
 }
 
-},{"./error":214,"./schemas":224,"is-my-json-valid":234}],217:[function(require,module,exports){
+},{"./error":216,"./schemas":226,"is-my-json-valid":236}],219:[function(require,module,exports){
 module.exports={
   "properties": {
     "beforeRequest": {
@@ -64779,7 +64785,7 @@ module.exports={
   }
 }
 
-},{}],218:[function(require,module,exports){
+},{}],220:[function(require,module,exports){
 module.exports={
   "oneOf": [{
     "type": "object",
@@ -64812,7 +64818,7 @@ module.exports={
   }]
 }
 
-},{}],219:[function(require,module,exports){
+},{}],221:[function(require,module,exports){
 module.exports={
   "type": "object",
   "required": [
@@ -64841,7 +64847,7 @@ module.exports={
   }
 }
 
-},{}],220:[function(require,module,exports){
+},{}],222:[function(require,module,exports){
 module.exports={
   "type": "object",
   "required": [
@@ -64877,7 +64883,7 @@ module.exports={
   }
 }
 
-},{}],221:[function(require,module,exports){
+},{}],223:[function(require,module,exports){
 module.exports={
   "type": "object",
   "required": [
@@ -64897,7 +64903,7 @@ module.exports={
   }
 }
 
-},{}],222:[function(require,module,exports){
+},{}],224:[function(require,module,exports){
 module.exports={
   "type": "object",
   "optional": true,
@@ -64950,7 +64956,7 @@ module.exports={
   }
 }
 
-},{}],223:[function(require,module,exports){
+},{}],225:[function(require,module,exports){
 module.exports={
   "type": "object",
   "required": [
@@ -64963,7 +64969,7 @@ module.exports={
   }
 }
 
-},{}],224:[function(require,module,exports){
+},{}],226:[function(require,module,exports){
 'use strict'
 
 var schemas = {
@@ -65014,7 +65020,7 @@ schemas.har.properties.log = schemas.log
 
 module.exports = schemas
 
-},{"./cache.json":217,"./cacheEntry.json":218,"./content.json":219,"./cookie.json":220,"./creator.json":221,"./entry.json":222,"./har.json":223,"./log.json":225,"./page.json":226,"./pageTimings.json":227,"./postData.json":228,"./record.json":229,"./request.json":230,"./response.json":231,"./timings.json":232}],225:[function(require,module,exports){
+},{"./cache.json":219,"./cacheEntry.json":220,"./content.json":221,"./cookie.json":222,"./creator.json":223,"./entry.json":224,"./har.json":225,"./log.json":227,"./page.json":228,"./pageTimings.json":229,"./postData.json":230,"./record.json":231,"./request.json":232,"./response.json":233,"./timings.json":234}],227:[function(require,module,exports){
 module.exports={
   "type": "object",
   "required": [
@@ -65050,7 +65056,7 @@ module.exports={
   }
 }
 
-},{}],226:[function(require,module,exports){
+},{}],228:[function(require,module,exports){
 module.exports={
   "type": "object",
   "optional": true,
@@ -65082,7 +65088,7 @@ module.exports={
   }
 }
 
-},{}],227:[function(require,module,exports){
+},{}],229:[function(require,module,exports){
 module.exports={
   "type": "object",
   "properties": {
@@ -65100,7 +65106,7 @@ module.exports={
   }
 }
 
-},{}],228:[function(require,module,exports){
+},{}],230:[function(require,module,exports){
 module.exports={
   "type": "object",
   "optional": true,
@@ -65143,7 +65149,7 @@ module.exports={
   }
 }
 
-},{}],229:[function(require,module,exports){
+},{}],231:[function(require,module,exports){
 module.exports={
   "type": "object",
   "required": [
@@ -65163,7 +65169,7 @@ module.exports={
   }
 }
 
-},{}],230:[function(require,module,exports){
+},{}],232:[function(require,module,exports){
 module.exports={
   "type": "object",
   "required": [
@@ -65220,7 +65226,7 @@ module.exports={
   }
 }
 
-},{}],231:[function(require,module,exports){
+},{}],233:[function(require,module,exports){
 module.exports={
   "type": "object",
   "required": [
@@ -65274,7 +65280,7 @@ module.exports={
   }
 }
 
-},{}],232:[function(require,module,exports){
+},{}],234:[function(require,module,exports){
 module.exports={
   "required": [
     "send",
@@ -65316,7 +65322,7 @@ module.exports={
   }
 }
 
-},{}],233:[function(require,module,exports){
+},{}],235:[function(require,module,exports){
 exports['date-time'] = /^\d{4}-(?:0[0-9]{1}|1[0-2]{1})-[0-9]{2}[tT ]\d{2}:\d{2}:\d{2}(\.\d+)?([zZ]|[+-]\d{2}:\d{2})$/
 exports['date'] = /^\d{4}-(?:0[0-9]{1}|1[0-2]{1})-[0-9]{2}$/
 exports['time'] = /^\d{2}:\d{2}:\d{2}$/
@@ -65332,7 +65338,7 @@ exports['style'] = /\s*(.+?):\s*([^;]+);?/g
 exports['phone'] = /^\+(?:[0-9] ?){6,14}[0-9]$/
 exports['utc-millisec'] = /^[0-9]+(\.?[0-9]+)?$/
 
-},{}],234:[function(require,module,exports){
+},{}],236:[function(require,module,exports){
 var genobj = require('generate-object-property')
 var genfun = require('generate-function')
 var jsonpointer = require('jsonpointer')
@@ -65525,7 +65531,7 @@ var compile = function(schema, cache, root, reporter, opts) {
         validate('for (var %s = %d; %s < %s.length; %s++) {', i, node.items.length, i, name, i)
         visit(name+'['+i+']', node.additionalItems, reporter, filter)
         validate('}')
-      }   
+      }
     }
 
     if (node.format && fmts[node.format]) {
@@ -65730,7 +65736,7 @@ var compile = function(schema, cache, root, reporter, opts) {
       node.anyOf.forEach(function(sch, i) {
         if (i === 0) {
           validate('var %s = errors', prev)
-        } else {          
+        } else {
           validate('if (errors !== %s) {', prev)
             ('errors = %s', prev)
         }
@@ -65781,7 +65787,7 @@ var compile = function(schema, cache, root, reporter, opts) {
 
     if (node.maxProperties !== undefined) {
       if (type !== 'object') validate('if (%s) {', types.object(name))
-      
+
       validate('if (Object.keys(%s).length > %d) {', name, node.maxProperties)
       error('has more properties than allowed')
       validate('}')
@@ -65791,7 +65797,7 @@ var compile = function(schema, cache, root, reporter, opts) {
 
     if (node.minProperties !== undefined) {
       if (type !== 'object') validate('if (%s) {', types.object(name))
-      
+
       validate('if (Object.keys(%s).length < %d) {', name, node.minProperties)
       error('has less properties than allowed')
       validate('}')
@@ -65801,7 +65807,7 @@ var compile = function(schema, cache, root, reporter, opts) {
 
     if (node.maxItems !== undefined) {
       if (type !== 'array') validate('if (%s) {', types.array(name))
-      
+
       validate('if (%s.length > %d) {', name, node.maxItems)
       error('has more items than allowed')
       validate('}')
@@ -65811,7 +65817,7 @@ var compile = function(schema, cache, root, reporter, opts) {
 
     if (node.minItems !== undefined) {
       if (type !== 'array') validate('if (%s) {', types.array(name))
-      
+
       validate('if (%s.length < %d) {', name, node.minItems)
       error('has less items than allowed')
       validate('}')
@@ -65878,14 +65884,16 @@ var compile = function(schema, cache, root, reporter, opts) {
   validate = validate.toFunction(scope)
   validate.errors = null
 
-  validate.__defineGetter__('error', function() {
-    if (!validate.errors) return ''
-    return validate.errors
-      .map(function(err) {
-        return err.field+' '+err.message
-      })
-      .join('\n')
-  })
+  if (Object.defineProperty) {
+    Object.defineProperty(validate, 'error', {
+      get: function() {
+        if (!validate.errors) return ''
+        return validate.errors.map(function(err) {
+          return err.field + ' ' + err.message;
+        }).join('\n')
+      }
+    })
+  }
 
   validate.toJSON = function() {
     return schema
@@ -65907,7 +65915,7 @@ module.exports.filter = function(schema, opts) {
   }
 }
 
-},{"./formats":233,"generate-function":235,"generate-object-property":236,"jsonpointer":238,"xtend":239}],235:[function(require,module,exports){
+},{"./formats":235,"generate-function":237,"generate-object-property":238,"jsonpointer":240,"xtend":241}],237:[function(require,module,exports){
 var util = require('util')
 
 var INDENT_START = /[\{\[]/
@@ -65970,7 +65978,7 @@ module.exports = function() {
   return line
 }
 
-},{"util":517}],236:[function(require,module,exports){
+},{"util":519}],238:[function(require,module,exports){
 var isProperty = require('is-property')
 
 var gen = function(obj, prop) {
@@ -65984,13 +65992,13 @@ gen.property = function (prop) {
 
 module.exports = gen
 
-},{"is-property":237}],237:[function(require,module,exports){
+},{"is-property":239}],239:[function(require,module,exports){
 "use strict"
 function isProperty(str) {
   return /^[$A-Z\_a-z\xaa\xb5\xba\xc0-\xd6\xd8-\xf6\xf8-\u02c1\u02c6-\u02d1\u02e0-\u02e4\u02ec\u02ee\u0370-\u0374\u0376\u0377\u037a-\u037d\u0386\u0388-\u038a\u038c\u038e-\u03a1\u03a3-\u03f5\u03f7-\u0481\u048a-\u0527\u0531-\u0556\u0559\u0561-\u0587\u05d0-\u05ea\u05f0-\u05f2\u0620-\u064a\u066e\u066f\u0671-\u06d3\u06d5\u06e5\u06e6\u06ee\u06ef\u06fa-\u06fc\u06ff\u0710\u0712-\u072f\u074d-\u07a5\u07b1\u07ca-\u07ea\u07f4\u07f5\u07fa\u0800-\u0815\u081a\u0824\u0828\u0840-\u0858\u08a0\u08a2-\u08ac\u0904-\u0939\u093d\u0950\u0958-\u0961\u0971-\u0977\u0979-\u097f\u0985-\u098c\u098f\u0990\u0993-\u09a8\u09aa-\u09b0\u09b2\u09b6-\u09b9\u09bd\u09ce\u09dc\u09dd\u09df-\u09e1\u09f0\u09f1\u0a05-\u0a0a\u0a0f\u0a10\u0a13-\u0a28\u0a2a-\u0a30\u0a32\u0a33\u0a35\u0a36\u0a38\u0a39\u0a59-\u0a5c\u0a5e\u0a72-\u0a74\u0a85-\u0a8d\u0a8f-\u0a91\u0a93-\u0aa8\u0aaa-\u0ab0\u0ab2\u0ab3\u0ab5-\u0ab9\u0abd\u0ad0\u0ae0\u0ae1\u0b05-\u0b0c\u0b0f\u0b10\u0b13-\u0b28\u0b2a-\u0b30\u0b32\u0b33\u0b35-\u0b39\u0b3d\u0b5c\u0b5d\u0b5f-\u0b61\u0b71\u0b83\u0b85-\u0b8a\u0b8e-\u0b90\u0b92-\u0b95\u0b99\u0b9a\u0b9c\u0b9e\u0b9f\u0ba3\u0ba4\u0ba8-\u0baa\u0bae-\u0bb9\u0bd0\u0c05-\u0c0c\u0c0e-\u0c10\u0c12-\u0c28\u0c2a-\u0c33\u0c35-\u0c39\u0c3d\u0c58\u0c59\u0c60\u0c61\u0c85-\u0c8c\u0c8e-\u0c90\u0c92-\u0ca8\u0caa-\u0cb3\u0cb5-\u0cb9\u0cbd\u0cde\u0ce0\u0ce1\u0cf1\u0cf2\u0d05-\u0d0c\u0d0e-\u0d10\u0d12-\u0d3a\u0d3d\u0d4e\u0d60\u0d61\u0d7a-\u0d7f\u0d85-\u0d96\u0d9a-\u0db1\u0db3-\u0dbb\u0dbd\u0dc0-\u0dc6\u0e01-\u0e30\u0e32\u0e33\u0e40-\u0e46\u0e81\u0e82\u0e84\u0e87\u0e88\u0e8a\u0e8d\u0e94-\u0e97\u0e99-\u0e9f\u0ea1-\u0ea3\u0ea5\u0ea7\u0eaa\u0eab\u0ead-\u0eb0\u0eb2\u0eb3\u0ebd\u0ec0-\u0ec4\u0ec6\u0edc-\u0edf\u0f00\u0f40-\u0f47\u0f49-\u0f6c\u0f88-\u0f8c\u1000-\u102a\u103f\u1050-\u1055\u105a-\u105d\u1061\u1065\u1066\u106e-\u1070\u1075-\u1081\u108e\u10a0-\u10c5\u10c7\u10cd\u10d0-\u10fa\u10fc-\u1248\u124a-\u124d\u1250-\u1256\u1258\u125a-\u125d\u1260-\u1288\u128a-\u128d\u1290-\u12b0\u12b2-\u12b5\u12b8-\u12be\u12c0\u12c2-\u12c5\u12c8-\u12d6\u12d8-\u1310\u1312-\u1315\u1318-\u135a\u1380-\u138f\u13a0-\u13f4\u1401-\u166c\u166f-\u167f\u1681-\u169a\u16a0-\u16ea\u16ee-\u16f0\u1700-\u170c\u170e-\u1711\u1720-\u1731\u1740-\u1751\u1760-\u176c\u176e-\u1770\u1780-\u17b3\u17d7\u17dc\u1820-\u1877\u1880-\u18a8\u18aa\u18b0-\u18f5\u1900-\u191c\u1950-\u196d\u1970-\u1974\u1980-\u19ab\u19c1-\u19c7\u1a00-\u1a16\u1a20-\u1a54\u1aa7\u1b05-\u1b33\u1b45-\u1b4b\u1b83-\u1ba0\u1bae\u1baf\u1bba-\u1be5\u1c00-\u1c23\u1c4d-\u1c4f\u1c5a-\u1c7d\u1ce9-\u1cec\u1cee-\u1cf1\u1cf5\u1cf6\u1d00-\u1dbf\u1e00-\u1f15\u1f18-\u1f1d\u1f20-\u1f45\u1f48-\u1f4d\u1f50-\u1f57\u1f59\u1f5b\u1f5d\u1f5f-\u1f7d\u1f80-\u1fb4\u1fb6-\u1fbc\u1fbe\u1fc2-\u1fc4\u1fc6-\u1fcc\u1fd0-\u1fd3\u1fd6-\u1fdb\u1fe0-\u1fec\u1ff2-\u1ff4\u1ff6-\u1ffc\u2071\u207f\u2090-\u209c\u2102\u2107\u210a-\u2113\u2115\u2119-\u211d\u2124\u2126\u2128\u212a-\u212d\u212f-\u2139\u213c-\u213f\u2145-\u2149\u214e\u2160-\u2188\u2c00-\u2c2e\u2c30-\u2c5e\u2c60-\u2ce4\u2ceb-\u2cee\u2cf2\u2cf3\u2d00-\u2d25\u2d27\u2d2d\u2d30-\u2d67\u2d6f\u2d80-\u2d96\u2da0-\u2da6\u2da8-\u2dae\u2db0-\u2db6\u2db8-\u2dbe\u2dc0-\u2dc6\u2dc8-\u2dce\u2dd0-\u2dd6\u2dd8-\u2dde\u2e2f\u3005-\u3007\u3021-\u3029\u3031-\u3035\u3038-\u303c\u3041-\u3096\u309d-\u309f\u30a1-\u30fa\u30fc-\u30ff\u3105-\u312d\u3131-\u318e\u31a0-\u31ba\u31f0-\u31ff\u3400-\u4db5\u4e00-\u9fcc\ua000-\ua48c\ua4d0-\ua4fd\ua500-\ua60c\ua610-\ua61f\ua62a\ua62b\ua640-\ua66e\ua67f-\ua697\ua6a0-\ua6ef\ua717-\ua71f\ua722-\ua788\ua78b-\ua78e\ua790-\ua793\ua7a0-\ua7aa\ua7f8-\ua801\ua803-\ua805\ua807-\ua80a\ua80c-\ua822\ua840-\ua873\ua882-\ua8b3\ua8f2-\ua8f7\ua8fb\ua90a-\ua925\ua930-\ua946\ua960-\ua97c\ua984-\ua9b2\ua9cf\uaa00-\uaa28\uaa40-\uaa42\uaa44-\uaa4b\uaa60-\uaa76\uaa7a\uaa80-\uaaaf\uaab1\uaab5\uaab6\uaab9-\uaabd\uaac0\uaac2\uaadb-\uaadd\uaae0-\uaaea\uaaf2-\uaaf4\uab01-\uab06\uab09-\uab0e\uab11-\uab16\uab20-\uab26\uab28-\uab2e\uabc0-\uabe2\uac00-\ud7a3\ud7b0-\ud7c6\ud7cb-\ud7fb\uf900-\ufa6d\ufa70-\ufad9\ufb00-\ufb06\ufb13-\ufb17\ufb1d\ufb1f-\ufb28\ufb2a-\ufb36\ufb38-\ufb3c\ufb3e\ufb40\ufb41\ufb43\ufb44\ufb46-\ufbb1\ufbd3-\ufd3d\ufd50-\ufd8f\ufd92-\ufdc7\ufdf0-\ufdfb\ufe70-\ufe74\ufe76-\ufefc\uff21-\uff3a\uff41-\uff5a\uff66-\uffbe\uffc2-\uffc7\uffca-\uffcf\uffd2-\uffd7\uffda-\uffdc][$A-Z\_a-z\xaa\xb5\xba\xc0-\xd6\xd8-\xf6\xf8-\u02c1\u02c6-\u02d1\u02e0-\u02e4\u02ec\u02ee\u0370-\u0374\u0376\u0377\u037a-\u037d\u0386\u0388-\u038a\u038c\u038e-\u03a1\u03a3-\u03f5\u03f7-\u0481\u048a-\u0527\u0531-\u0556\u0559\u0561-\u0587\u05d0-\u05ea\u05f0-\u05f2\u0620-\u064a\u066e\u066f\u0671-\u06d3\u06d5\u06e5\u06e6\u06ee\u06ef\u06fa-\u06fc\u06ff\u0710\u0712-\u072f\u074d-\u07a5\u07b1\u07ca-\u07ea\u07f4\u07f5\u07fa\u0800-\u0815\u081a\u0824\u0828\u0840-\u0858\u08a0\u08a2-\u08ac\u0904-\u0939\u093d\u0950\u0958-\u0961\u0971-\u0977\u0979-\u097f\u0985-\u098c\u098f\u0990\u0993-\u09a8\u09aa-\u09b0\u09b2\u09b6-\u09b9\u09bd\u09ce\u09dc\u09dd\u09df-\u09e1\u09f0\u09f1\u0a05-\u0a0a\u0a0f\u0a10\u0a13-\u0a28\u0a2a-\u0a30\u0a32\u0a33\u0a35\u0a36\u0a38\u0a39\u0a59-\u0a5c\u0a5e\u0a72-\u0a74\u0a85-\u0a8d\u0a8f-\u0a91\u0a93-\u0aa8\u0aaa-\u0ab0\u0ab2\u0ab3\u0ab5-\u0ab9\u0abd\u0ad0\u0ae0\u0ae1\u0b05-\u0b0c\u0b0f\u0b10\u0b13-\u0b28\u0b2a-\u0b30\u0b32\u0b33\u0b35-\u0b39\u0b3d\u0b5c\u0b5d\u0b5f-\u0b61\u0b71\u0b83\u0b85-\u0b8a\u0b8e-\u0b90\u0b92-\u0b95\u0b99\u0b9a\u0b9c\u0b9e\u0b9f\u0ba3\u0ba4\u0ba8-\u0baa\u0bae-\u0bb9\u0bd0\u0c05-\u0c0c\u0c0e-\u0c10\u0c12-\u0c28\u0c2a-\u0c33\u0c35-\u0c39\u0c3d\u0c58\u0c59\u0c60\u0c61\u0c85-\u0c8c\u0c8e-\u0c90\u0c92-\u0ca8\u0caa-\u0cb3\u0cb5-\u0cb9\u0cbd\u0cde\u0ce0\u0ce1\u0cf1\u0cf2\u0d05-\u0d0c\u0d0e-\u0d10\u0d12-\u0d3a\u0d3d\u0d4e\u0d60\u0d61\u0d7a-\u0d7f\u0d85-\u0d96\u0d9a-\u0db1\u0db3-\u0dbb\u0dbd\u0dc0-\u0dc6\u0e01-\u0e30\u0e32\u0e33\u0e40-\u0e46\u0e81\u0e82\u0e84\u0e87\u0e88\u0e8a\u0e8d\u0e94-\u0e97\u0e99-\u0e9f\u0ea1-\u0ea3\u0ea5\u0ea7\u0eaa\u0eab\u0ead-\u0eb0\u0eb2\u0eb3\u0ebd\u0ec0-\u0ec4\u0ec6\u0edc-\u0edf\u0f00\u0f40-\u0f47\u0f49-\u0f6c\u0f88-\u0f8c\u1000-\u102a\u103f\u1050-\u1055\u105a-\u105d\u1061\u1065\u1066\u106e-\u1070\u1075-\u1081\u108e\u10a0-\u10c5\u10c7\u10cd\u10d0-\u10fa\u10fc-\u1248\u124a-\u124d\u1250-\u1256\u1258\u125a-\u125d\u1260-\u1288\u128a-\u128d\u1290-\u12b0\u12b2-\u12b5\u12b8-\u12be\u12c0\u12c2-\u12c5\u12c8-\u12d6\u12d8-\u1310\u1312-\u1315\u1318-\u135a\u1380-\u138f\u13a0-\u13f4\u1401-\u166c\u166f-\u167f\u1681-\u169a\u16a0-\u16ea\u16ee-\u16f0\u1700-\u170c\u170e-\u1711\u1720-\u1731\u1740-\u1751\u1760-\u176c\u176e-\u1770\u1780-\u17b3\u17d7\u17dc\u1820-\u1877\u1880-\u18a8\u18aa\u18b0-\u18f5\u1900-\u191c\u1950-\u196d\u1970-\u1974\u1980-\u19ab\u19c1-\u19c7\u1a00-\u1a16\u1a20-\u1a54\u1aa7\u1b05-\u1b33\u1b45-\u1b4b\u1b83-\u1ba0\u1bae\u1baf\u1bba-\u1be5\u1c00-\u1c23\u1c4d-\u1c4f\u1c5a-\u1c7d\u1ce9-\u1cec\u1cee-\u1cf1\u1cf5\u1cf6\u1d00-\u1dbf\u1e00-\u1f15\u1f18-\u1f1d\u1f20-\u1f45\u1f48-\u1f4d\u1f50-\u1f57\u1f59\u1f5b\u1f5d\u1f5f-\u1f7d\u1f80-\u1fb4\u1fb6-\u1fbc\u1fbe\u1fc2-\u1fc4\u1fc6-\u1fcc\u1fd0-\u1fd3\u1fd6-\u1fdb\u1fe0-\u1fec\u1ff2-\u1ff4\u1ff6-\u1ffc\u2071\u207f\u2090-\u209c\u2102\u2107\u210a-\u2113\u2115\u2119-\u211d\u2124\u2126\u2128\u212a-\u212d\u212f-\u2139\u213c-\u213f\u2145-\u2149\u214e\u2160-\u2188\u2c00-\u2c2e\u2c30-\u2c5e\u2c60-\u2ce4\u2ceb-\u2cee\u2cf2\u2cf3\u2d00-\u2d25\u2d27\u2d2d\u2d30-\u2d67\u2d6f\u2d80-\u2d96\u2da0-\u2da6\u2da8-\u2dae\u2db0-\u2db6\u2db8-\u2dbe\u2dc0-\u2dc6\u2dc8-\u2dce\u2dd0-\u2dd6\u2dd8-\u2dde\u2e2f\u3005-\u3007\u3021-\u3029\u3031-\u3035\u3038-\u303c\u3041-\u3096\u309d-\u309f\u30a1-\u30fa\u30fc-\u30ff\u3105-\u312d\u3131-\u318e\u31a0-\u31ba\u31f0-\u31ff\u3400-\u4db5\u4e00-\u9fcc\ua000-\ua48c\ua4d0-\ua4fd\ua500-\ua60c\ua610-\ua61f\ua62a\ua62b\ua640-\ua66e\ua67f-\ua697\ua6a0-\ua6ef\ua717-\ua71f\ua722-\ua788\ua78b-\ua78e\ua790-\ua793\ua7a0-\ua7aa\ua7f8-\ua801\ua803-\ua805\ua807-\ua80a\ua80c-\ua822\ua840-\ua873\ua882-\ua8b3\ua8f2-\ua8f7\ua8fb\ua90a-\ua925\ua930-\ua946\ua960-\ua97c\ua984-\ua9b2\ua9cf\uaa00-\uaa28\uaa40-\uaa42\uaa44-\uaa4b\uaa60-\uaa76\uaa7a\uaa80-\uaaaf\uaab1\uaab5\uaab6\uaab9-\uaabd\uaac0\uaac2\uaadb-\uaadd\uaae0-\uaaea\uaaf2-\uaaf4\uab01-\uab06\uab09-\uab0e\uab11-\uab16\uab20-\uab26\uab28-\uab2e\uabc0-\uabe2\uac00-\ud7a3\ud7b0-\ud7c6\ud7cb-\ud7fb\uf900-\ufa6d\ufa70-\ufad9\ufb00-\ufb06\ufb13-\ufb17\ufb1d\ufb1f-\ufb28\ufb2a-\ufb36\ufb38-\ufb3c\ufb3e\ufb40\ufb41\ufb43\ufb44\ufb46-\ufbb1\ufbd3-\ufd3d\ufd50-\ufd8f\ufd92-\ufdc7\ufdf0-\ufdfb\ufe70-\ufe74\ufe76-\ufefc\uff21-\uff3a\uff41-\uff5a\uff66-\uffbe\uffc2-\uffc7\uffca-\uffcf\uffd2-\uffd7\uffda-\uffdc0-9\u0300-\u036f\u0483-\u0487\u0591-\u05bd\u05bf\u05c1\u05c2\u05c4\u05c5\u05c7\u0610-\u061a\u064b-\u0669\u0670\u06d6-\u06dc\u06df-\u06e4\u06e7\u06e8\u06ea-\u06ed\u06f0-\u06f9\u0711\u0730-\u074a\u07a6-\u07b0\u07c0-\u07c9\u07eb-\u07f3\u0816-\u0819\u081b-\u0823\u0825-\u0827\u0829-\u082d\u0859-\u085b\u08e4-\u08fe\u0900-\u0903\u093a-\u093c\u093e-\u094f\u0951-\u0957\u0962\u0963\u0966-\u096f\u0981-\u0983\u09bc\u09be-\u09c4\u09c7\u09c8\u09cb-\u09cd\u09d7\u09e2\u09e3\u09e6-\u09ef\u0a01-\u0a03\u0a3c\u0a3e-\u0a42\u0a47\u0a48\u0a4b-\u0a4d\u0a51\u0a66-\u0a71\u0a75\u0a81-\u0a83\u0abc\u0abe-\u0ac5\u0ac7-\u0ac9\u0acb-\u0acd\u0ae2\u0ae3\u0ae6-\u0aef\u0b01-\u0b03\u0b3c\u0b3e-\u0b44\u0b47\u0b48\u0b4b-\u0b4d\u0b56\u0b57\u0b62\u0b63\u0b66-\u0b6f\u0b82\u0bbe-\u0bc2\u0bc6-\u0bc8\u0bca-\u0bcd\u0bd7\u0be6-\u0bef\u0c01-\u0c03\u0c3e-\u0c44\u0c46-\u0c48\u0c4a-\u0c4d\u0c55\u0c56\u0c62\u0c63\u0c66-\u0c6f\u0c82\u0c83\u0cbc\u0cbe-\u0cc4\u0cc6-\u0cc8\u0cca-\u0ccd\u0cd5\u0cd6\u0ce2\u0ce3\u0ce6-\u0cef\u0d02\u0d03\u0d3e-\u0d44\u0d46-\u0d48\u0d4a-\u0d4d\u0d57\u0d62\u0d63\u0d66-\u0d6f\u0d82\u0d83\u0dca\u0dcf-\u0dd4\u0dd6\u0dd8-\u0ddf\u0df2\u0df3\u0e31\u0e34-\u0e3a\u0e47-\u0e4e\u0e50-\u0e59\u0eb1\u0eb4-\u0eb9\u0ebb\u0ebc\u0ec8-\u0ecd\u0ed0-\u0ed9\u0f18\u0f19\u0f20-\u0f29\u0f35\u0f37\u0f39\u0f3e\u0f3f\u0f71-\u0f84\u0f86\u0f87\u0f8d-\u0f97\u0f99-\u0fbc\u0fc6\u102b-\u103e\u1040-\u1049\u1056-\u1059\u105e-\u1060\u1062-\u1064\u1067-\u106d\u1071-\u1074\u1082-\u108d\u108f-\u109d\u135d-\u135f\u1712-\u1714\u1732-\u1734\u1752\u1753\u1772\u1773\u17b4-\u17d3\u17dd\u17e0-\u17e9\u180b-\u180d\u1810-\u1819\u18a9\u1920-\u192b\u1930-\u193b\u1946-\u194f\u19b0-\u19c0\u19c8\u19c9\u19d0-\u19d9\u1a17-\u1a1b\u1a55-\u1a5e\u1a60-\u1a7c\u1a7f-\u1a89\u1a90-\u1a99\u1b00-\u1b04\u1b34-\u1b44\u1b50-\u1b59\u1b6b-\u1b73\u1b80-\u1b82\u1ba1-\u1bad\u1bb0-\u1bb9\u1be6-\u1bf3\u1c24-\u1c37\u1c40-\u1c49\u1c50-\u1c59\u1cd0-\u1cd2\u1cd4-\u1ce8\u1ced\u1cf2-\u1cf4\u1dc0-\u1de6\u1dfc-\u1dff\u200c\u200d\u203f\u2040\u2054\u20d0-\u20dc\u20e1\u20e5-\u20f0\u2cef-\u2cf1\u2d7f\u2de0-\u2dff\u302a-\u302f\u3099\u309a\ua620-\ua629\ua66f\ua674-\ua67d\ua69f\ua6f0\ua6f1\ua802\ua806\ua80b\ua823-\ua827\ua880\ua881\ua8b4-\ua8c4\ua8d0-\ua8d9\ua8e0-\ua8f1\ua900-\ua909\ua926-\ua92d\ua947-\ua953\ua980-\ua983\ua9b3-\ua9c0\ua9d0-\ua9d9\uaa29-\uaa36\uaa43\uaa4c\uaa4d\uaa50-\uaa59\uaa7b\uaab0\uaab2-\uaab4\uaab7\uaab8\uaabe\uaabf\uaac1\uaaeb-\uaaef\uaaf5\uaaf6\uabe3-\uabea\uabec\uabed\uabf0-\uabf9\ufb1e\ufe00-\ufe0f\ufe20-\ufe26\ufe33\ufe34\ufe4d-\ufe4f\uff10-\uff19\uff3f]*$/.test(str)
 }
 module.exports = isProperty
-},{}],238:[function(require,module,exports){
+},{}],240:[function(require,module,exports){
 var untilde = function(str) {
   return str.replace(/~./g, function(m) {
     switch (m) {
@@ -66068,7 +66076,7 @@ var set = function(obj, pointer, value) {
 exports.get = get
 exports.set = set
 
-},{}],239:[function(require,module,exports){
+},{}],241:[function(require,module,exports){
 module.exports = extend
 
 var hasOwnProperty = Object.prototype.hasOwnProperty;
@@ -66089,14 +66097,14 @@ function extend() {
     return target
 }
 
-},{}],240:[function(require,module,exports){
+},{}],242:[function(require,module,exports){
 (function (global){
 'use strict';
 
 module.exports = global.Promise || require('pinkie');
 
 }).call(this,typeof global !== "undefined" ? global : typeof self !== "undefined" ? self : typeof window !== "undefined" ? window : {})
-},{"pinkie":241}],241:[function(require,module,exports){
+},{"pinkie":243}],243:[function(require,module,exports){
 'use strict';
 
 var PENDING = 'pending';
@@ -66374,7 +66382,7 @@ Promise.reject = function (reason) {
 
 module.exports = Promise;
 
-},{}],242:[function(require,module,exports){
+},{}],244:[function(require,module,exports){
 /*
     HTTP Hawk Authentication Scheme
     Copyright (c) 2012-2014, Eran Hammer <eran@hammer.io>
@@ -66470,8 +66478,8 @@ hawk.client = {
             ts: timestamp,
             nonce: options.nonce || hawk.utils.randomString(6),
             method: method,
-            resource: uri.relative,
-            host: uri.hostname,
+            resource: uri.resource,
+            host: uri.host,
             port: uri.port,
             hash: options.hash,
             ext: options.ext,
@@ -66578,8 +66586,8 @@ hawk.client = {
             ts: exp,
             nonce: '',
             method: 'GET',
-            resource: uri.relative,                            // Maintain trailing '?' and query params
-            host: uri.hostname,
+            resource: uri.resource,                            // Maintain trailing '?' and query params
+            host: uri.host,
             port: uri.port,
             ext: options.ext
         });
@@ -66960,26 +66968,20 @@ hawk.utils = {
         return result.join('');
     },
 
+    uriRegex: /^([^:]+)\:\/\/(?:[^@]*@)?([^\/:]+)(?:\:(\d+))?([^#]*)(?:#.*)?$/,       // scheme://credentials@host:port/resource#fragment
     parseUri: function (input) {
 
-        // Based on: parseURI 1.2.2
-        // http://blog.stevenlevithan.com/archives/parseuri
-        // (c) Steven Levithan <stevenlevithan.com>
-        // MIT License
-
-        var keys = ['source', 'protocol', 'authority', 'userInfo', 'user', 'password', 'hostname', 'port', 'resource', 'relative', 'pathname', 'directory', 'file', 'query', 'fragment'];
-
-        var uriRegex = /^(?:([^:\/?#]+):)?(?:\/\/((?:(([^:@]*)(?::([^:@]*))?)?@)?([^:\/?#]*)(?::(\d*))?))?(((((?:[^?#\/]*\/)*)([^?#]*))(?:\?([^#]*))?)(?:#(.*))?)/;
-        var uriByNumber = input.match(uriRegex);
-        var uri = {};
-
-        for (var i = 0, il = keys.length; i < il; ++i) {
-            uri[keys[i]] = uriByNumber[i] || '';
+        var parts = input.match(hawk.utils.uriRegex);
+        if (!parts) {
+            return { host: '', port: '', resource: '' };
         }
 
-        if (uri.port === '') {
-            uri.port = (uri.protocol.toLowerCase() === 'http' ? '80' : (uri.protocol.toLowerCase() === 'https' ? '443' : ''));
-        }
+        var scheme = parts[1].toLowerCase();
+        var uri = {
+            host: parts[2],
+            port: parts[3] || (scheme === 'http' ? '80' : (scheme === 'https' ? '443' : '')),
+            resource: parts[4]
+        };
 
         return uri;
     },
@@ -67019,7 +67021,7 @@ if (typeof module !== 'undefined' && module.exports) {
 /* eslint-enable */
 // $lab:coverage:on$
 
-},{}],243:[function(require,module,exports){
+},{}],245:[function(require,module,exports){
 // Copyright 2015 Joyent, Inc.
 
 var parser = require('./parser');
@@ -67048,7 +67050,7 @@ module.exports = {
   verifyHMAC: verify.verifyHMAC
 };
 
-},{"./parser":244,"./signer":245,"./util":246,"./verify":247}],244:[function(require,module,exports){
+},{"./parser":246,"./signer":247,"./util":248,"./verify":249}],246:[function(require,module,exports){
 // Copyright 2012 Joyent, Inc.  All rights reserved.
 
 var assert = require('assert-plus');
@@ -67354,7 +67356,7 @@ module.exports = {
 
 };
 
-},{"assert-plus":254,"util":517}],245:[function(require,module,exports){
+},{"assert-plus":256,"util":519}],247:[function(require,module,exports){
 // Copyright 2012 Joyent, Inc.  All rights reserved.
 
 var assert = require('assert-plus');
@@ -67534,7 +67536,7 @@ module.exports = {
 
 };
 
-},{"assert-plus":254,"crypto":301,"http":488,"util":517}],246:[function(require,module,exports){
+},{"assert-plus":256,"crypto":303,"http":490,"util":519}],248:[function(require,module,exports){
 (function (Buffer){
 // Copyright 2012 Joyent, Inc.  All rights reserved.
 
@@ -67844,7 +67846,7 @@ module.exports = {
 };
 
 }).call(this,require("buffer").Buffer)
-},{"asn1":253,"assert-plus":254,"buffer":297,"crypto":301,"ctype":257}],247:[function(require,module,exports){
+},{"asn1":255,"assert-plus":256,"buffer":299,"crypto":303,"ctype":259}],249:[function(require,module,exports){
 // Copyright 2015 Joyent, Inc.
 
 var assert = require('assert-plus');
@@ -67902,7 +67904,7 @@ module.exports = {
   }
 };
 
-},{"assert-plus":254,"crypto":301}],248:[function(require,module,exports){
+},{"assert-plus":256,"crypto":303}],250:[function(require,module,exports){
 // Copyright 2011 Mark Cavage <mcavage@gmail.com> All rights reserved.
 
 
@@ -67917,7 +67919,7 @@ module.exports = {
 
 };
 
-},{}],249:[function(require,module,exports){
+},{}],251:[function(require,module,exports){
 // Copyright 2011 Mark Cavage <mcavage@gmail.com> All rights reserved.
 
 var errors = require('./errors');
@@ -67946,7 +67948,7 @@ for (var e in errors) {
     module.exports[e] = errors[e];
 }
 
-},{"./errors":248,"./reader":250,"./types":251,"./writer":252}],250:[function(require,module,exports){
+},{"./errors":250,"./reader":252,"./types":253,"./writer":254}],252:[function(require,module,exports){
 (function (Buffer){
 // Copyright 2011 Mark Cavage <mcavage@gmail.com> All rights reserved.
 
@@ -68217,7 +68219,7 @@ Reader.prototype._readTag = function(tag) {
 module.exports = Reader;
 
 }).call(this,{"isBuffer":require("../../../../../../../../../browserify/node_modules/insert-module-globals/node_modules/is-buffer/index.js")})
-},{"../../../../../../../../../browserify/node_modules/insert-module-globals/node_modules/is-buffer/index.js":494,"./errors":248,"./types":251,"assert":282}],251:[function(require,module,exports){
+},{"../../../../../../../../../browserify/node_modules/insert-module-globals/node_modules/is-buffer/index.js":496,"./errors":250,"./types":253,"assert":284}],253:[function(require,module,exports){
 // Copyright 2011 Mark Cavage <mcavage@gmail.com> All rights reserved.
 
 
@@ -68255,7 +68257,7 @@ module.exports = {
   Context: 128
 };
 
-},{}],252:[function(require,module,exports){
+},{}],254:[function(require,module,exports){
 (function (Buffer){
 // Copyright 2011 Mark Cavage <mcavage@gmail.com> All rights reserved.
 
@@ -68576,7 +68578,7 @@ Writer.prototype._ensure = function(len) {
 module.exports = Writer;
 
 }).call(this,require("buffer").Buffer)
-},{"./errors":248,"./types":251,"assert":282,"buffer":297}],253:[function(require,module,exports){
+},{"./errors":250,"./types":253,"assert":284,"buffer":299}],255:[function(require,module,exports){
 // Copyright 2011 Mark Cavage <mcavage@gmail.com> All rights reserved.
 
 // If you have no idea what ASN.1 or BER is, see this:
@@ -68598,7 +68600,7 @@ module.exports = {
 
 };
 
-},{"./ber/index":249}],254:[function(require,module,exports){
+},{"./ber/index":251}],256:[function(require,module,exports){
 (function (Buffer,process){
 // Copyright (c) 2012, Mark Cavage. All rights reserved.
 
@@ -68847,7 +68849,7 @@ Object.keys(assert).forEach(function (k) {
 });
 
 }).call(this,{"isBuffer":require("../../../../../../../browserify/node_modules/insert-module-globals/node_modules/is-buffer/index.js")},require('_process'))
-},{"../../../../../../../browserify/node_modules/insert-module-globals/node_modules/is-buffer/index.js":494,"_process":497,"assert":282,"stream":513,"util":517}],255:[function(require,module,exports){
+},{"../../../../../../../browserify/node_modules/insert-module-globals/node_modules/is-buffer/index.js":496,"_process":499,"assert":284,"stream":515,"util":519}],257:[function(require,module,exports){
 /*
  * ctf.js
  *
@@ -69094,7 +69096,7 @@ function ctfParseJson(json, ctype)
 
 exports.ctfParseJson = ctfParseJson;
 
-},{"assert":282}],256:[function(require,module,exports){
+},{"assert":284}],258:[function(require,module,exports){
 /*
  * rm - Feb 2011
  * ctio.js:
@@ -70581,7 +70583,7 @@ exports.rdouble = rdouble;
 exports.wfloat = wfloat;
 exports.wdouble = wdouble;
 
-},{"assert":282}],257:[function(require,module,exports){
+},{"assert":284}],259:[function(require,module,exports){
 (function (Buffer){
 /*
  * rm - Feb 2011
@@ -71529,7 +71531,7 @@ exports.wfloat = mod_ctio.wfloat;
 exports.wdouble = mod_ctio.wdouble;
 
 }).call(this,require("buffer").Buffer)
-},{"./ctf.js":255,"./ctio.js":256,"assert":282,"buffer":297}],258:[function(require,module,exports){
+},{"./ctf.js":257,"./ctio.js":258,"assert":284,"buffer":299}],260:[function(require,module,exports){
 var stream = require('stream')
 
 
@@ -71558,7 +71560,7 @@ module.exports.isReadable = isReadable
 module.exports.isWritable = isWritable
 module.exports.isDuplex   = isDuplex
 
-},{"stream":513}],259:[function(require,module,exports){
+},{"stream":515}],261:[function(require,module,exports){
 exports = module.exports = stringify
 exports.getSerialize = serializer
 
@@ -71587,7 +71589,7 @@ function serializer(replacer, cycleReplacer) {
   }
 }
 
-},{}],260:[function(require,module,exports){
+},{}],262:[function(require,module,exports){
 /*!
  * mime-types
  * Copyright(c) 2014 Jonathan Ong
@@ -71777,7 +71779,7 @@ function populateMaps(extensions, types) {
   })
 }
 
-},{"mime-db":262,"path":496}],261:[function(require,module,exports){
+},{"mime-db":264,"path":498}],263:[function(require,module,exports){
 module.exports={
   "application/1d-interleaved-parityfec": {
     "source": "iana"
@@ -78253,7 +78255,7 @@ module.exports={
   }
 }
 
-},{}],262:[function(require,module,exports){
+},{}],264:[function(require,module,exports){
 /*!
  * mime-db
  * Copyright(c) 2014 Jonathan Ong
@@ -78266,7 +78268,7 @@ module.exports={
 
 module.exports = require('./db.json')
 
-},{"./db.json":261}],263:[function(require,module,exports){
+},{"./db.json":263}],265:[function(require,module,exports){
 //     uuid.js
 //
 //     Copyright (c) 2010-2012 Robert Kieffer
@@ -78515,7 +78517,7 @@ module.exports = require('./db.json')
   }
 }).call(this);
 
-},{}],264:[function(require,module,exports){
+},{}],266:[function(require,module,exports){
 var crypto = require('crypto')
   , qs = require('querystring')
   ;
@@ -78651,7 +78653,7 @@ exports.plaintext = plaintext
 exports.sign = sign
 exports.rfc3986 = rfc3986
 
-},{"crypto":301,"querystring":501}],265:[function(require,module,exports){
+},{"crypto":303,"querystring":503}],267:[function(require,module,exports){
 // Load modules
 
 var Stringify = require('./stringify');
@@ -78668,7 +78670,7 @@ module.exports = {
     parse: Parse
 };
 
-},{"./parse":266,"./stringify":267}],266:[function(require,module,exports){
+},{"./parse":268,"./stringify":269}],268:[function(require,module,exports){
 // Load modules
 
 var Utils = require('./utils');
@@ -78857,7 +78859,7 @@ module.exports = function (str, options) {
     return Utils.compact(obj);
 };
 
-},{"./utils":268}],267:[function(require,module,exports){
+},{"./utils":270}],269:[function(require,module,exports){
 // Load modules
 
 var Utils = require('./utils');
@@ -79013,7 +79015,7 @@ module.exports = function (obj, options) {
     return keys.join(delimiter);
 };
 
-},{"./utils":268}],268:[function(require,module,exports){
+},{"./utils":270}],270:[function(require,module,exports){
 // Load modules
 
 
@@ -79205,7 +79207,7 @@ exports.isBuffer = function (obj) {
               obj.constructor.isBuffer(obj));
 };
 
-},{}],269:[function(require,module,exports){
+},{}],271:[function(require,module,exports){
 (function (Buffer){
 var util = require('util')
 var Stream = require('stream')
@@ -79311,7 +79313,7 @@ function alignedWrite(buffer) {
 }
 
 }).call(this,require("buffer").Buffer)
-},{"buffer":297,"stream":513,"string_decoder":514,"util":517}],270:[function(require,module,exports){
+},{"buffer":299,"stream":515,"string_decoder":516,"util":519}],272:[function(require,module,exports){
 /*!
  * Copyright (c) 2015, Salesforce.com, Inc.
  * All rights reserved.
@@ -80655,7 +80657,7 @@ module.exports = {
   canonicalDomain: canonicalDomain
 };
 
-},{"../package.json":276,"./memstore":271,"./pathMatch":272,"./permuteDomain":273,"./pubsuffix":274,"./store":275,"net":281,"punycode":498,"url":515}],271:[function(require,module,exports){
+},{"../package.json":278,"./memstore":273,"./pathMatch":274,"./permuteDomain":275,"./pubsuffix":276,"./store":277,"net":283,"punycode":500,"url":517}],273:[function(require,module,exports){
 /*!
  * Copyright (c) 2015, Salesforce.com, Inc.
  * All rights reserved.
@@ -80827,7 +80829,7 @@ MemoryCookieStore.prototype.getAllCookies = function(cb) {
   cb(null, cookies);
 };
 
-},{"./pathMatch":272,"./permuteDomain":273,"./store":275,"util":517}],272:[function(require,module,exports){
+},{"./pathMatch":274,"./permuteDomain":275,"./store":277,"util":519}],274:[function(require,module,exports){
 /*!
  * Copyright (c) 2015, Salesforce.com, Inc.
  * All rights reserved.
@@ -80890,7 +80892,7 @@ function pathMatch (reqPath, cookiePath) {
 
 exports.pathMatch = pathMatch;
 
-},{}],273:[function(require,module,exports){
+},{}],275:[function(require,module,exports){
 /*!
  * Copyright (c) 2015, Salesforce.com, Inc.
  * All rights reserved.
@@ -80948,7 +80950,7 @@ function permuteDomain (domain) {
 
 exports.permuteDomain = permuteDomain;
 
-},{"./pubsuffix":274}],274:[function(require,module,exports){
+},{"./pubsuffix":276}],276:[function(require,module,exports){
 /****************************************************
  * AUTOMATICALLY GENERATED by generate-pubsuffix.js *
  *                  DO NOT EDIT!                    *
@@ -81048,7 +81050,7 @@ var index = module.exports.index = Object.freeze(
 
 // END of automatically generated file
 
-},{"punycode":498}],275:[function(require,module,exports){
+},{"punycode":500}],277:[function(require,module,exports){
 /*!
  * Copyright (c) 2015, Salesforce.com, Inc.
  * All rights reserved.
@@ -81121,7 +81123,7 @@ Store.prototype.getAllCookies = function(cb) {
   throw new Error('getAllCookies is not implemented (therefore jar cannot be serialized)');
 };
 
-},{}],276:[function(require,module,exports){
+},{}],278:[function(require,module,exports){
 module.exports={
   "author": {
     "name": "Jeremy Stashewsky",
@@ -81213,7 +81215,7 @@ module.exports={
   "readme": "ERROR: No README data found!"
 }
 
-},{}],277:[function(require,module,exports){
+},{}],279:[function(require,module,exports){
 (function (process,Buffer){
 'use strict'
 
@@ -81458,7 +81460,7 @@ if (process.env.NODE_DEBUG && /\btunnel\b/.test(process.env.NODE_DEBUG)) {
 exports.debug = debug // for test
 
 }).call(this,require('_process'),require("buffer").Buffer)
-},{"_process":497,"assert":282,"buffer":297,"events":487,"http":488,"https":492,"net":281,"tls":281,"util":517}],278:[function(require,module,exports){
+},{"_process":499,"assert":284,"buffer":299,"events":489,"http":490,"https":494,"net":283,"tls":283,"util":519}],280:[function(require,module,exports){
 (function (process,Buffer){
 'use strict'
 
@@ -82900,7 +82902,7 @@ Request.prototype.toJSON = requestToJSON
 module.exports = Request
 
 }).call(this,require('_process'),require("buffer").Buffer)
-},{"./lib/auth":186,"./lib/cookies":187,"./lib/getProxyFromURI":188,"./lib/har":189,"./lib/helpers":190,"./lib/multipart":191,"./lib/oauth":192,"./lib/querystring":193,"./lib/redirect":194,"./lib/tunnel":195,"_process":497,"aws-sign2":196,"bl":197,"buffer":297,"caseless":208,"forever-agent":212,"form-data":213,"hawk":242,"http":488,"http-signature":243,"https":492,"mime-types":260,"stream":513,"stringstream":269,"url":515,"util":517,"zlib":296}],279:[function(require,module,exports){
+},{"./lib/auth":188,"./lib/cookies":189,"./lib/getProxyFromURI":190,"./lib/har":191,"./lib/helpers":192,"./lib/multipart":193,"./lib/oauth":194,"./lib/querystring":195,"./lib/redirect":196,"./lib/tunnel":197,"_process":499,"aws-sign2":198,"bl":199,"buffer":299,"caseless":210,"forever-agent":214,"form-data":215,"hawk":244,"http":490,"http-signature":245,"https":494,"mime-types":262,"stream":515,"stringstream":271,"url":517,"util":519,"zlib":298}],281:[function(require,module,exports){
 "use strict";function q(a){throw a;}var s=void 0,u=!1;var sjcl={cipher:{},hash:{},keyexchange:{},mode:{},misc:{},codec:{},exception:{corrupt:function(a){this.toString=function(){return"CORRUPT: "+this.message};this.message=a},invalid:function(a){this.toString=function(){return"INVALID: "+this.message};this.message=a},bug:function(a){this.toString=function(){return"BUG: "+this.message};this.message=a},notReady:function(a){this.toString=function(){return"NOT READY: "+this.message};this.message=a}}};
 "undefined"!==typeof module&&module.exports&&(module.exports=sjcl);"function"===typeof define&&define([],function(){return sjcl});
 sjcl.cipher.aes=function(a){this.k[0][0][0]||this.D();var b,c,d,e,f=this.k[0][4],g=this.k[1];b=a.length;var h=1;4!==b&&(6!==b&&8!==b)&&q(new sjcl.exception.invalid("invalid aes key size"));this.b=[d=a.slice(0),e=[]];for(a=b;a<4*b+28;a++){c=d[a-1];if(0===a%b||8===b&&4===a%b)c=f[c>>>24]<<24^f[c>>16&255]<<16^f[c>>8&255]<<8^f[c&255],0===a%b&&(c=c<<8^c>>>24^h<<24,h=h<<1^283*(h>>7));d[a]=d[a-b]^c}for(b=0;a;b++,a--)c=d[b&3?a:a-4],e[b]=4>=a||4>b?c:g[0][f[c>>>24]]^g[1][f[c>>16&255]]^g[2][f[c>>8&255]]^g[3][f[c&
@@ -82956,14 +82958,14 @@ a.replace(/\s/g,"");a.match(/^\{.*\}$/)||q(new sjcl.exception.invalid("json deco
 d[5]);return b},e:function(a,b,c){a===s&&(a={});if(b===s)return a;for(var d in b)b.hasOwnProperty(d)&&(c&&(a[d]!==s&&a[d]!==b[d])&&q(new sjcl.exception.invalid("required parameter overridden")),a[d]=b[d]);return a},fa:function(a,b){var c={},d;for(d in a)a.hasOwnProperty(d)&&a[d]!==b[d]&&(c[d]=a[d]);return c},ea:function(a,b){var c={},d;for(d=0;d<b.length;d++)a[b[d]]!==s&&(c[b[d]]=a[b[d]]);return c}};sjcl.encrypt=sjcl.json.encrypt;sjcl.decrypt=sjcl.json.decrypt;sjcl.misc.ca={};
 sjcl.misc.cachedPbkdf2=function(a,b){var c=sjcl.misc.ca,d;b=b||{};d=b.iter||1E3;c=c[a]=c[a]||{};d=c[d]=c[d]||{firstSalt:b.salt&&b.salt.length?b.salt.slice(0):sjcl.random.randomWords(2,0)};c=b.salt===s?d.firstSalt:b.salt;d[c]=d[c]||sjcl.misc.pbkdf2(a,c,b.iter);return{key:d[c].slice(0),salt:c.slice(0)}};
 
-},{"crypto":301}],280:[function(require,module,exports){
+},{"crypto":303}],282:[function(require,module,exports){
 module.exports={
   "name": "bitcore-wallet-client",
   "description": "Client for bitcore-wallet-service",
   "author": {
     "name": "BitPay Inc"
   },
-  "version": "1.1.3",
+  "version": "1.1.4",
   "license": "MIT",
   "keywords": [
     "bitcoin",
@@ -82987,23 +82989,25 @@ module.exports={
     "bitcore-lib": "^0.13.7",
     "bitcore-mnemonic": "~1.0.0",
     "bitcore-payment-protocol": "~1.0.0",
-    "bitcore-wallet-utils": "~1.0.0",
     "browser-request": "^0.3.3",
     "browserify": "^9.0.3",
+    "json-stable-stringify": "^1.0.0",
     "lodash": "^3.3.1",
     "preconditions": "^1.0.8",
     "request": "^2.53.0",
-    "sjcl": "^1.0.2",
-    "uglify": "^0.1.1"
+    "sjcl": "^1.0.2"
   },
   "devDependencies": {
-    "bitcore-wallet-service": "~1.1.0",
+    "bitcore-wallet-service": "~1.2.0",
+    "browserify": "^9.0.3",
     "chai": "^1.9.1",
     "coveralls": "^2.11.2",
+    "grunt": "~0.4.0",
     "grunt-jsdoc": "^0.5.8",
     "istanbul": "*",
     "jsdoc": "^3.3.0-beta1",
     "mocha": "^1.18.2",
+    "uglify": "^0.1.1",
     "sinon": "^1.10.3",
     "supertest": "*",
     "tingodb": "^0.3.4"
@@ -83024,11 +83028,11 @@ module.exports={
       "email": "ematiu@gmail.com"
     }
   ],
-  "gitHead": "a4bea0e87f9d8bbaee8d439b2bd99425aabd60d2",
+  "gitHead": "974e8be196493afe10d641f86a5a974aef5060e1",
   "homepage": "https://github.com/bitpay/bitcore-wallet-client#readme",
-  "_id": "bitcore-wallet-client@1.1.3",
-  "_shasum": "ee0aa3db9c3cda6e46643d2fc395c42bd51cff32",
-  "_from": "bitcore-wallet-client@1.1.3",
+  "_id": "bitcore-wallet-client@1.1.4",
+  "_shasum": "ea9351cda26a525e7173958e71f7a3f71763c962",
+  "_from": "bitcore-wallet-client@1.1.4",
   "_npmVersion": "2.14.7",
   "_nodeVersion": "4.2.1",
   "_npmUser": {
@@ -83036,8 +83040,8 @@ module.exports={
     "email": "cmgustavo83@gmail.com"
   },
   "dist": {
-    "shasum": "ee0aa3db9c3cda6e46643d2fc395c42bd51cff32",
-    "tarball": "http://registry.npmjs.org/bitcore-wallet-client/-/bitcore-wallet-client-1.1.3.tgz"
+    "shasum": "ea9351cda26a525e7173958e71f7a3f71763c962",
+    "tarball": "http://registry.npmjs.org/bitcore-wallet-client/-/bitcore-wallet-client-1.1.4.tgz"
   },
   "maintainers": [
     {
@@ -83054,12 +83058,12 @@ module.exports={
     }
   ],
   "directories": {},
-  "_resolved": "https://registry.npmjs.org/bitcore-wallet-client/-/bitcore-wallet-client-1.1.3.tgz"
+  "_resolved": "https://registry.npmjs.org/bitcore-wallet-client/-/bitcore-wallet-client-1.1.4.tgz"
 }
 
-},{}],281:[function(require,module,exports){
+},{}],283:[function(require,module,exports){
 
-},{}],282:[function(require,module,exports){
+},{}],284:[function(require,module,exports){
 // http://wiki.commonjs.org/wiki/Unit_Testing/1.0
 //
 // THIS IS NOT TESTED NOR LIKELY TO WORK OUTSIDE V8!
@@ -83420,9 +83424,9 @@ var objectKeys = Object.keys || function (obj) {
   return keys;
 };
 
-},{"util/":517}],283:[function(require,module,exports){
-arguments[4][281][0].apply(exports,arguments)
-},{"dup":281}],284:[function(require,module,exports){
+},{"util/":519}],285:[function(require,module,exports){
+arguments[4][283][0].apply(exports,arguments)
+},{"dup":283}],286:[function(require,module,exports){
 'use strict';
 
 
@@ -83526,7 +83530,7 @@ exports.setTyped = function (on) {
 
 exports.setTyped(TYPED_OK);
 
-},{}],285:[function(require,module,exports){
+},{}],287:[function(require,module,exports){
 'use strict';
 
 // Note: adler32 takes 12% for level 0 and 2% for level 6.
@@ -83560,7 +83564,7 @@ function adler32(adler, buf, len, pos) {
 
 module.exports = adler32;
 
-},{}],286:[function(require,module,exports){
+},{}],288:[function(require,module,exports){
 module.exports = {
 
   /* Allowed flush values; see deflate() and inflate() below for details */
@@ -83609,7 +83613,7 @@ module.exports = {
   //Z_NULL:                 null // Use -1 or null inline, depending on var type
 };
 
-},{}],287:[function(require,module,exports){
+},{}],289:[function(require,module,exports){
 'use strict';
 
 // Note: we can't get significant speed boost here.
@@ -83652,7 +83656,7 @@ function crc32(crc, buf, len, pos) {
 
 module.exports = crc32;
 
-},{}],288:[function(require,module,exports){
+},{}],290:[function(require,module,exports){
 'use strict';
 
 var utils   = require('../utils/common');
@@ -85419,7 +85423,7 @@ exports.deflatePrime = deflatePrime;
 exports.deflateTune = deflateTune;
 */
 
-},{"../utils/common":284,"./adler32":285,"./crc32":287,"./messages":292,"./trees":293}],289:[function(require,module,exports){
+},{"../utils/common":286,"./adler32":287,"./crc32":289,"./messages":294,"./trees":295}],291:[function(require,module,exports){
 'use strict';
 
 // See state defs from inflate.js
@@ -85747,7 +85751,7 @@ module.exports = function inflate_fast(strm, start) {
   return;
 };
 
-},{}],290:[function(require,module,exports){
+},{}],292:[function(require,module,exports){
 'use strict';
 
 
@@ -87252,7 +87256,7 @@ exports.inflateSyncPoint = inflateSyncPoint;
 exports.inflateUndermine = inflateUndermine;
 */
 
-},{"../utils/common":284,"./adler32":285,"./crc32":287,"./inffast":289,"./inftrees":291}],291:[function(require,module,exports){
+},{"../utils/common":286,"./adler32":287,"./crc32":289,"./inffast":291,"./inftrees":293}],293:[function(require,module,exports){
 'use strict';
 
 
@@ -87581,7 +87585,7 @@ module.exports = function inflate_table(type, lens, lens_index, codes, table, ta
   return 0;
 };
 
-},{"../utils/common":284}],292:[function(require,module,exports){
+},{"../utils/common":286}],294:[function(require,module,exports){
 'use strict';
 
 module.exports = {
@@ -87596,7 +87600,7 @@ module.exports = {
   '-6':   'incompatible version' /* Z_VERSION_ERROR (-6) */
 };
 
-},{}],293:[function(require,module,exports){
+},{}],295:[function(require,module,exports){
 'use strict';
 
 
@@ -88797,7 +88801,7 @@ exports._tr_flush_block  = _tr_flush_block;
 exports._tr_tally = _tr_tally;
 exports._tr_align = _tr_align;
 
-},{"../utils/common":284}],294:[function(require,module,exports){
+},{"../utils/common":286}],296:[function(require,module,exports){
 'use strict';
 
 
@@ -88828,7 +88832,7 @@ function ZStream() {
 
 module.exports = ZStream;
 
-},{}],295:[function(require,module,exports){
+},{}],297:[function(require,module,exports){
 (function (process,Buffer){
 var msg = require('pako/lib/zlib/messages');
 var zstream = require('pako/lib/zlib/zstream');
@@ -89068,7 +89072,7 @@ Zlib.prototype._error = function(status) {
 exports.Zlib = Zlib;
 
 }).call(this,require('_process'),require("buffer").Buffer)
-},{"_process":497,"buffer":297,"pako/lib/zlib/constants":286,"pako/lib/zlib/deflate.js":288,"pako/lib/zlib/inflate.js":290,"pako/lib/zlib/messages":292,"pako/lib/zlib/zstream":294}],296:[function(require,module,exports){
+},{"_process":499,"buffer":299,"pako/lib/zlib/constants":288,"pako/lib/zlib/deflate.js":290,"pako/lib/zlib/inflate.js":292,"pako/lib/zlib/messages":294,"pako/lib/zlib/zstream":296}],298:[function(require,module,exports){
 (function (process,Buffer){
 // Copyright Joyent, Inc. and other Node contributors.
 //
@@ -89682,7 +89686,7 @@ util.inherits(InflateRaw, Zlib);
 util.inherits(Unzip, Zlib);
 
 }).call(this,require('_process'),require("buffer").Buffer)
-},{"./binding":295,"_process":497,"_stream_transform":511,"assert":282,"buffer":297,"util":517}],297:[function(require,module,exports){
+},{"./binding":297,"_process":499,"_stream_transform":513,"assert":284,"buffer":299,"util":519}],299:[function(require,module,exports){
 (function (global){
 /*!
  * The buffer module from node.js, for the browser.
@@ -91230,7 +91234,7 @@ function blitBuffer (src, dst, offset, length) {
 }
 
 }).call(this,typeof global !== "undefined" ? global : typeof self !== "undefined" ? self : typeof window !== "undefined" ? window : {})
-},{"base64-js":298,"ieee754":299,"is-array":300}],298:[function(require,module,exports){
+},{"base64-js":300,"ieee754":301,"is-array":302}],300:[function(require,module,exports){
 var lookup = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
 
 ;(function (exports) {
@@ -91356,7 +91360,7 @@ var lookup = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
 	exports.fromByteArray = uint8ToBase64
 }(typeof exports === 'undefined' ? (this.base64js = {}) : exports))
 
-},{}],299:[function(require,module,exports){
+},{}],301:[function(require,module,exports){
 exports.read = function (buffer, offset, isLE, mLen, nBytes) {
   var e, m
   var eLen = nBytes * 8 - mLen - 1
@@ -91442,7 +91446,7 @@ exports.write = function (buffer, value, offset, isLE, mLen, nBytes) {
   buffer[offset + i - d] |= s * 128
 }
 
-},{}],300:[function(require,module,exports){
+},{}],302:[function(require,module,exports){
 
 /**
  * isArray
@@ -91477,7 +91481,7 @@ module.exports = isArray || function (val) {
   return !! val && '[object Array]' == str.call(val);
 };
 
-},{}],301:[function(require,module,exports){
+},{}],303:[function(require,module,exports){
 'use strict'
 
 exports.randomBytes = exports.rng = exports.pseudoRandomBytes = exports.prng = require('randombytes')
@@ -91556,7 +91560,7 @@ var publicEncrypt = require('public-encrypt')
   }
 })
 
-},{"browserify-cipher":302,"browserify-sign":332,"browserify-sign/algos":331,"create-ecdh":396,"create-hash":419,"create-hmac":432,"diffie-hellman":433,"pbkdf2":440,"public-encrypt":441,"randombytes":486}],302:[function(require,module,exports){
+},{"browserify-cipher":304,"browserify-sign":334,"browserify-sign/algos":333,"create-ecdh":398,"create-hash":421,"create-hmac":434,"diffie-hellman":435,"pbkdf2":442,"public-encrypt":443,"randombytes":488}],304:[function(require,module,exports){
 var ebtk = require('evp_bytestokey')
 var aes = require('browserify-aes/browser')
 var DES = require('browserify-des')
@@ -91631,37 +91635,37 @@ function getCiphers () {
 }
 exports.listCiphers = exports.getCiphers = getCiphers
 
-},{"browserify-aes/browser":305,"browserify-aes/modes":309,"browserify-des":320,"browserify-des/modes":321,"evp_bytestokey":330}],303:[function(require,module,exports){
-arguments[4][17][0].apply(exports,arguments)
-},{"buffer":297,"dup":17}],304:[function(require,module,exports){
-arguments[4][18][0].apply(exports,arguments)
-},{"./aes":303,"./ghash":308,"buffer":297,"buffer-xor":317,"cipher-base":318,"dup":18,"inherits":493}],305:[function(require,module,exports){
-arguments[4][19][0].apply(exports,arguments)
-},{"./decrypter":306,"./encrypter":307,"./modes":309,"dup":19}],306:[function(require,module,exports){
-arguments[4][20][0].apply(exports,arguments)
-},{"./aes":303,"./authCipher":304,"./modes":309,"./modes/cbc":310,"./modes/cfb":311,"./modes/cfb1":312,"./modes/cfb8":313,"./modes/ctr":314,"./modes/ecb":315,"./modes/ofb":316,"./streamCipher":319,"buffer":297,"cipher-base":318,"dup":20,"evp_bytestokey":330,"inherits":493}],307:[function(require,module,exports){
+},{"browserify-aes/browser":307,"browserify-aes/modes":311,"browserify-des":322,"browserify-des/modes":323,"evp_bytestokey":332}],305:[function(require,module,exports){
 arguments[4][21][0].apply(exports,arguments)
-},{"./aes":303,"./authCipher":304,"./modes":309,"./modes/cbc":310,"./modes/cfb":311,"./modes/cfb1":312,"./modes/cfb8":313,"./modes/ctr":314,"./modes/ecb":315,"./modes/ofb":316,"./streamCipher":319,"buffer":297,"cipher-base":318,"dup":21,"evp_bytestokey":330,"inherits":493}],308:[function(require,module,exports){
+},{"buffer":299,"dup":21}],306:[function(require,module,exports){
 arguments[4][22][0].apply(exports,arguments)
-},{"buffer":297,"dup":22}],309:[function(require,module,exports){
+},{"./aes":305,"./ghash":310,"buffer":299,"buffer-xor":319,"cipher-base":320,"dup":22,"inherits":495}],307:[function(require,module,exports){
 arguments[4][23][0].apply(exports,arguments)
-},{"dup":23}],310:[function(require,module,exports){
+},{"./decrypter":308,"./encrypter":309,"./modes":311,"dup":23}],308:[function(require,module,exports){
 arguments[4][24][0].apply(exports,arguments)
-},{"buffer-xor":317,"dup":24}],311:[function(require,module,exports){
+},{"./aes":305,"./authCipher":306,"./modes":311,"./modes/cbc":312,"./modes/cfb":313,"./modes/cfb1":314,"./modes/cfb8":315,"./modes/ctr":316,"./modes/ecb":317,"./modes/ofb":318,"./streamCipher":321,"buffer":299,"cipher-base":320,"dup":24,"evp_bytestokey":332,"inherits":495}],309:[function(require,module,exports){
 arguments[4][25][0].apply(exports,arguments)
-},{"buffer":297,"buffer-xor":317,"dup":25}],312:[function(require,module,exports){
+},{"./aes":305,"./authCipher":306,"./modes":311,"./modes/cbc":312,"./modes/cfb":313,"./modes/cfb1":314,"./modes/cfb8":315,"./modes/ctr":316,"./modes/ecb":317,"./modes/ofb":318,"./streamCipher":321,"buffer":299,"cipher-base":320,"dup":25,"evp_bytestokey":332,"inherits":495}],310:[function(require,module,exports){
 arguments[4][26][0].apply(exports,arguments)
-},{"buffer":297,"dup":26}],313:[function(require,module,exports){
+},{"buffer":299,"dup":26}],311:[function(require,module,exports){
 arguments[4][27][0].apply(exports,arguments)
-},{"buffer":297,"dup":27}],314:[function(require,module,exports){
+},{"dup":27}],312:[function(require,module,exports){
 arguments[4][28][0].apply(exports,arguments)
-},{"buffer":297,"buffer-xor":317,"dup":28}],315:[function(require,module,exports){
+},{"buffer-xor":319,"dup":28}],313:[function(require,module,exports){
 arguments[4][29][0].apply(exports,arguments)
-},{"dup":29}],316:[function(require,module,exports){
+},{"buffer":299,"buffer-xor":319,"dup":29}],314:[function(require,module,exports){
 arguments[4][30][0].apply(exports,arguments)
-},{"buffer":297,"buffer-xor":317,"dup":30}],317:[function(require,module,exports){
-arguments[4][35][0].apply(exports,arguments)
-},{"buffer":297,"dup":35}],318:[function(require,module,exports){
+},{"buffer":299,"dup":30}],315:[function(require,module,exports){
+arguments[4][31][0].apply(exports,arguments)
+},{"buffer":299,"dup":31}],316:[function(require,module,exports){
+arguments[4][32][0].apply(exports,arguments)
+},{"buffer":299,"buffer-xor":319,"dup":32}],317:[function(require,module,exports){
+arguments[4][33][0].apply(exports,arguments)
+},{"dup":33}],318:[function(require,module,exports){
+arguments[4][34][0].apply(exports,arguments)
+},{"buffer":299,"buffer-xor":319,"dup":34}],319:[function(require,module,exports){
+arguments[4][39][0].apply(exports,arguments)
+},{"buffer":299,"dup":39}],320:[function(require,module,exports){
 (function (Buffer){
 var Transform = require('stream').Transform
 var inherits = require('inherits')
@@ -91740,9 +91744,9 @@ CipherBase.prototype._toString = function (value, enc, final) {
 }
 
 }).call(this,require("buffer").Buffer)
-},{"buffer":297,"inherits":493,"stream":513,"string_decoder":514}],319:[function(require,module,exports){
-arguments[4][34][0].apply(exports,arguments)
-},{"./aes":303,"buffer":297,"cipher-base":318,"dup":34,"inherits":493}],320:[function(require,module,exports){
+},{"buffer":299,"inherits":495,"stream":515,"string_decoder":516}],321:[function(require,module,exports){
+arguments[4][38][0].apply(exports,arguments)
+},{"./aes":305,"buffer":299,"cipher-base":320,"dup":38,"inherits":495}],322:[function(require,module,exports){
 (function (Buffer){
 var CipherBase = require('cipher-base')
 var des = require('des.js')
@@ -91789,7 +91793,7 @@ DES.prototype._final = function () {
 }
 
 }).call(this,require("buffer").Buffer)
-},{"buffer":297,"cipher-base":322,"des.js":323,"inherits":493}],321:[function(require,module,exports){
+},{"buffer":299,"cipher-base":324,"des.js":325,"inherits":495}],323:[function(require,module,exports){
 exports['des-ecb'] = {
   key: 8,
   iv: 0
@@ -91815,9 +91819,9 @@ exports['des-ede'] = {
   iv: 0
 }
 
-},{}],322:[function(require,module,exports){
-arguments[4][318][0].apply(exports,arguments)
-},{"buffer":297,"dup":318,"inherits":493,"stream":513,"string_decoder":514}],323:[function(require,module,exports){
+},{}],324:[function(require,module,exports){
+arguments[4][320][0].apply(exports,arguments)
+},{"buffer":299,"dup":320,"inherits":495,"stream":515,"string_decoder":516}],325:[function(require,module,exports){
 'use strict';
 
 exports.utils = require('./des/utils');
@@ -91826,7 +91830,7 @@ exports.DES = require('./des/des');
 exports.CBC = require('./des/cbc');
 exports.EDE = require('./des/ede');
 
-},{"./des/cbc":324,"./des/cipher":325,"./des/des":326,"./des/ede":327,"./des/utils":328}],324:[function(require,module,exports){
+},{"./des/cbc":326,"./des/cipher":327,"./des/des":328,"./des/ede":329,"./des/utils":330}],326:[function(require,module,exports){
 'use strict';
 
 var assert = require('minimalistic-assert');
@@ -91893,7 +91897,7 @@ proto._update = function _update(inp, inOff, out, outOff) {
   }
 };
 
-},{"inherits":493,"minimalistic-assert":329}],325:[function(require,module,exports){
+},{"inherits":495,"minimalistic-assert":331}],327:[function(require,module,exports){
 'use strict';
 
 var assert = require('minimalistic-assert');
@@ -92036,7 +92040,7 @@ Cipher.prototype._finalDecrypt = function _finalDecrypt() {
   return this._unpad(out);
 };
 
-},{"minimalistic-assert":329}],326:[function(require,module,exports){
+},{"minimalistic-assert":331}],328:[function(require,module,exports){
 'use strict';
 
 var assert = require('minimalistic-assert');
@@ -92181,7 +92185,7 @@ DES.prototype._decrypt = function _decrypt(state, lStart, rStart, out, off) {
   utils.rip(l, r, out, off);
 };
 
-},{"../des":323,"inherits":493,"minimalistic-assert":329}],327:[function(require,module,exports){
+},{"../des":325,"inherits":495,"minimalistic-assert":331}],329:[function(require,module,exports){
 'use strict';
 
 var assert = require('minimalistic-assert');
@@ -92238,7 +92242,7 @@ EDE.prototype._update = function _update(inp, inOff, out, outOff) {
 EDE.prototype._pad = DES.prototype._pad;
 EDE.prototype._unpad = DES.prototype._unpad;
 
-},{"../des":323,"inherits":493,"minimalistic-assert":329}],328:[function(require,module,exports){
+},{"../des":325,"inherits":495,"minimalistic-assert":331}],330:[function(require,module,exports){
 'use strict';
 
 exports.readUInt32BE = function readUInt32BE(bytes, off) {
@@ -92496,7 +92500,7 @@ exports.padSplit = function padSplit(num, size, group) {
   return out.join(' ');
 };
 
-},{}],329:[function(require,module,exports){
+},{}],331:[function(require,module,exports){
 module.exports = assert;
 
 function assert(val, msg) {
@@ -92509,9 +92513,9 @@ assert.equal = function assertEqual(l, r, msg) {
     throw new Error(msg || ('Assertion failed: ' + l + ' != ' + r));
 };
 
-},{}],330:[function(require,module,exports){
-arguments[4][32][0].apply(exports,arguments)
-},{"buffer":297,"create-hash/md5":421,"dup":32}],331:[function(require,module,exports){
+},{}],332:[function(require,module,exports){
+arguments[4][36][0].apply(exports,arguments)
+},{"buffer":299,"create-hash/md5":423,"dup":36}],333:[function(require,module,exports){
 (function (Buffer){
 'use strict'
 exports['RSA-SHA224'] = exports.sha224WithRSAEncryption = {
@@ -92586,7 +92590,7 @@ exports['RSA-MD5'] = exports.md5WithRSAEncryption = {
 }
 
 }).call(this,require("buffer").Buffer)
-},{"buffer":297}],332:[function(require,module,exports){
+},{"buffer":299}],334:[function(require,module,exports){
 (function (Buffer){
 var _algos = require('./algos')
 var createHash = require('create-hash')
@@ -92693,7 +92697,7 @@ module.exports = {
 }
 
 }).call(this,require("buffer").Buffer)
-},{"./algos":331,"./sign":394,"./verify":395,"buffer":297,"create-hash":419,"inherits":493,"stream":513}],333:[function(require,module,exports){
+},{"./algos":333,"./sign":396,"./verify":397,"buffer":299,"create-hash":421,"inherits":495,"stream":515}],335:[function(require,module,exports){
 'use strict'
 exports['1.3.132.0.10'] = 'secp256k1'
 
@@ -92703,7 +92707,7 @@ exports['1.2.840.10045.3.1.1'] = 'p192'
 
 exports['1.2.840.10045.3.1.7'] = 'p256'
 
-},{}],334:[function(require,module,exports){
+},{}],336:[function(require,module,exports){
 (function (module, exports) {
 
 'use strict';
@@ -95023,7 +95027,7 @@ Mont.prototype.invm = function invm(a) {
 
 })(typeof module === 'undefined' || module, this);
 
-},{}],335:[function(require,module,exports){
+},{}],337:[function(require,module,exports){
 (function (Buffer){
 var bn = require('bn.js');
 var randomBytes = require('randombytes');
@@ -95072,9 +95076,9 @@ function getr(priv) {
   return r;
 }
 }).call(this,require("buffer").Buffer)
-},{"bn.js":334,"buffer":297,"randombytes":486}],336:[function(require,module,exports){
-arguments[4][109][0].apply(exports,arguments)
-},{"../package.json":356,"./elliptic/curve":339,"./elliptic/curves":342,"./elliptic/ec":343,"./elliptic/hmac-drbg":346,"./elliptic/utils":348,"brorand":349,"dup":109}],337:[function(require,module,exports){
+},{"bn.js":336,"buffer":299,"randombytes":488}],338:[function(require,module,exports){
+arguments[4][113][0].apply(exports,arguments)
+},{"../package.json":358,"./elliptic/curve":341,"./elliptic/curves":344,"./elliptic/ec":345,"./elliptic/hmac-drbg":348,"./elliptic/utils":350,"brorand":351,"dup":113}],339:[function(require,module,exports){
 'use strict';
 
 var bn = require('bn.js');
@@ -95391,7 +95395,7 @@ BasePoint.prototype.dblp = function dblp(k) {
   return r;
 };
 
-},{"../../elliptic":336,"bn.js":334}],338:[function(require,module,exports){
+},{"../../elliptic":338,"bn.js":336}],340:[function(require,module,exports){
 'use strict';
 
 var curve = require('../curve');
@@ -95764,11 +95768,11 @@ Point.prototype.getY = function getY() {
 Point.prototype.toP = Point.prototype.normalize;
 Point.prototype.mixedAdd = Point.prototype.add;
 
-},{"../../elliptic":336,"../curve":339,"bn.js":334,"inherits":493}],339:[function(require,module,exports){
-arguments[4][112][0].apply(exports,arguments)
-},{"./base":337,"./edwards":338,"./mont":340,"./short":341,"dup":112}],340:[function(require,module,exports){
-arguments[4][113][0].apply(exports,arguments)
-},{"../curve":339,"bn.js":334,"dup":113,"inherits":493}],341:[function(require,module,exports){
+},{"../../elliptic":338,"../curve":341,"bn.js":336,"inherits":495}],341:[function(require,module,exports){
+arguments[4][116][0].apply(exports,arguments)
+},{"./base":339,"./edwards":340,"./mont":342,"./short":343,"dup":116}],342:[function(require,module,exports){
+arguments[4][117][0].apply(exports,arguments)
+},{"../curve":341,"bn.js":336,"dup":117,"inherits":495}],343:[function(require,module,exports){
 'use strict';
 
 var curve = require('../curve');
@@ -96677,9 +96681,9 @@ JPoint.prototype.isInfinity = function isInfinity() {
   return this.z.cmpn(0) === 0;
 };
 
-},{"../../elliptic":336,"../curve":339,"bn.js":334,"inherits":493}],342:[function(require,module,exports){
-arguments[4][115][0].apply(exports,arguments)
-},{"../elliptic":336,"./precomputed/secp256k1":347,"dup":115,"hash.js":350}],343:[function(require,module,exports){
+},{"../../elliptic":338,"../curve":341,"bn.js":336,"inherits":495}],344:[function(require,module,exports){
+arguments[4][119][0].apply(exports,arguments)
+},{"../elliptic":338,"./precomputed/secp256k1":349,"dup":119,"hash.js":352}],345:[function(require,module,exports){
 'use strict';
 
 var bn = require('bn.js');
@@ -96890,9 +96894,9 @@ EC.prototype.getKeyRecoveryParam = function(e, signature, Q, enc) {
   throw new Error('Unable to find valid recovery factor');
 };
 
-},{"../../elliptic":336,"./key":344,"./signature":345,"bn.js":334}],344:[function(require,module,exports){
-arguments[4][117][0].apply(exports,arguments)
-},{"../../elliptic":336,"bn.js":334,"dup":117}],345:[function(require,module,exports){
+},{"../../elliptic":338,"./key":346,"./signature":347,"bn.js":336}],346:[function(require,module,exports){
+arguments[4][121][0].apply(exports,arguments)
+},{"../../elliptic":338,"bn.js":336,"dup":121}],347:[function(require,module,exports){
 'use strict';
 
 var bn = require('bn.js');
@@ -96964,27 +96968,27 @@ Signature.prototype.toDER = function toDER(enc) {
   return utils.encode(res, enc);
 };
 
-},{"../../elliptic":336,"bn.js":334}],346:[function(require,module,exports){
-arguments[4][119][0].apply(exports,arguments)
-},{"../elliptic":336,"dup":119,"hash.js":350}],347:[function(require,module,exports){
-arguments[4][120][0].apply(exports,arguments)
-},{"dup":120}],348:[function(require,module,exports){
-arguments[4][121][0].apply(exports,arguments)
-},{"dup":121}],349:[function(require,module,exports){
-arguments[4][122][0].apply(exports,arguments)
-},{"dup":122}],350:[function(require,module,exports){
+},{"../../elliptic":338,"bn.js":336}],348:[function(require,module,exports){
 arguments[4][123][0].apply(exports,arguments)
-},{"./hash/common":351,"./hash/hmac":352,"./hash/ripemd":353,"./hash/sha":354,"./hash/utils":355,"dup":123}],351:[function(require,module,exports){
+},{"../elliptic":338,"dup":123,"hash.js":352}],349:[function(require,module,exports){
 arguments[4][124][0].apply(exports,arguments)
-},{"../hash":350,"dup":124}],352:[function(require,module,exports){
+},{"dup":124}],350:[function(require,module,exports){
 arguments[4][125][0].apply(exports,arguments)
-},{"../hash":350,"dup":125}],353:[function(require,module,exports){
+},{"dup":125}],351:[function(require,module,exports){
 arguments[4][126][0].apply(exports,arguments)
-},{"../hash":350,"dup":126}],354:[function(require,module,exports){
+},{"dup":126}],352:[function(require,module,exports){
 arguments[4][127][0].apply(exports,arguments)
-},{"../hash":350,"dup":127}],355:[function(require,module,exports){
+},{"./hash/common":353,"./hash/hmac":354,"./hash/ripemd":355,"./hash/sha":356,"./hash/utils":357,"dup":127}],353:[function(require,module,exports){
 arguments[4][128][0].apply(exports,arguments)
-},{"dup":128,"inherits":493}],356:[function(require,module,exports){
+},{"../hash":352,"dup":128}],354:[function(require,module,exports){
+arguments[4][129][0].apply(exports,arguments)
+},{"../hash":352,"dup":129}],355:[function(require,module,exports){
+arguments[4][130][0].apply(exports,arguments)
+},{"../hash":352,"dup":130}],356:[function(require,module,exports){
+arguments[4][131][0].apply(exports,arguments)
+},{"../hash":352,"dup":131}],357:[function(require,module,exports){
+arguments[4][132][0].apply(exports,arguments)
+},{"dup":132,"inherits":495}],358:[function(require,module,exports){
 module.exports={
   "name": "elliptic",
   "version": "3.1.0",
@@ -97050,7 +97054,7 @@ module.exports={
   "readme": "ERROR: No README data found!"
 }
 
-},{}],357:[function(require,module,exports){
+},{}],359:[function(require,module,exports){
 module.exports={"2.16.840.1.101.3.4.1.1": "aes-128-ecb",
 "2.16.840.1.101.3.4.1.2": "aes-128-cbc",
 "2.16.840.1.101.3.4.1.3": "aes-128-ofb",
@@ -97064,7 +97068,7 @@ module.exports={"2.16.840.1.101.3.4.1.1": "aes-128-ecb",
 "2.16.840.1.101.3.4.1.43": "aes-256-ofb",
 "2.16.840.1.101.3.4.1.44": "aes-256-cfb"
 }
-},{}],358:[function(require,module,exports){
+},{}],360:[function(require,module,exports){
 // from https://github.com/indutny/self-signed/blob/gh-pages/lib/asn1.js
 // Fedor, you are amazing.
 
@@ -97183,7 +97187,7 @@ exports.signature = asn1.define('signature', function () {
   )
 })
 
-},{"asn1.js":361}],359:[function(require,module,exports){
+},{"asn1.js":363}],361:[function(require,module,exports){
 (function (Buffer){
 // adapted from https://github.com/apatil/pemstrip
 var findProc = /Proc-Type: 4,ENCRYPTED\r?\nDEK-Info: AES-((?:128)|(?:192)|(?:256))-CBC,([0-9A-H]+)\r?\n\r?\n([0-9A-z\n\r\+\/\=]+)\r?\n/m
@@ -97217,7 +97221,7 @@ module.exports = function (okey, password) {
 }
 
 }).call(this,require("buffer").Buffer)
-},{"browserify-aes":378,"buffer":297,"evp_bytestokey":393}],360:[function(require,module,exports){
+},{"browserify-aes":380,"buffer":299,"evp_bytestokey":395}],362:[function(require,module,exports){
 (function (Buffer){
 var asn1 = require('./asn1')
 var aesid = require('./aesid.json')
@@ -97322,9 +97326,9 @@ function decrypt (data, password) {
 }
 
 }).call(this,require("buffer").Buffer)
-},{"./aesid.json":357,"./asn1":358,"./fixProc":359,"browserify-aes":378,"buffer":297,"pbkdf2":440}],361:[function(require,module,exports){
-arguments[4][153][0].apply(exports,arguments)
-},{"./asn1/api":362,"./asn1/base":364,"./asn1/constants":368,"./asn1/decoders":370,"./asn1/encoders":373,"bn.js":334,"dup":153}],362:[function(require,module,exports){
+},{"./aesid.json":359,"./asn1":360,"./fixProc":361,"browserify-aes":380,"buffer":299,"pbkdf2":442}],363:[function(require,module,exports){
+arguments[4][157][0].apply(exports,arguments)
+},{"./asn1/api":364,"./asn1/base":366,"./asn1/constants":370,"./asn1/decoders":372,"./asn1/encoders":375,"bn.js":336,"dup":157}],364:[function(require,module,exports){
 var asn1 = require('../asn1');
 var inherits = require('inherits');
 
@@ -97385,7 +97389,7 @@ Entity.prototype.encode = function encode(data, enc, /* internal */ reporter) {
   return this._getEncoder(enc).encode(data, reporter);
 };
 
-},{"../asn1":361,"inherits":493,"vm":518}],363:[function(require,module,exports){
+},{"../asn1":363,"inherits":495,"vm":520}],365:[function(require,module,exports){
 var inherits = require('inherits');
 var Reporter = require('../base').Reporter;
 var Buffer = require('buffer').Buffer;
@@ -97503,9 +97507,9 @@ EncoderBuffer.prototype.join = function join(out, offset) {
   return out;
 };
 
-},{"../base":364,"buffer":297,"inherits":493}],364:[function(require,module,exports){
-arguments[4][156][0].apply(exports,arguments)
-},{"./buffer":363,"./node":365,"./reporter":366,"dup":156}],365:[function(require,module,exports){
+},{"../base":366,"buffer":299,"inherits":495}],366:[function(require,module,exports){
+arguments[4][160][0].apply(exports,arguments)
+},{"./buffer":365,"./node":367,"./reporter":368,"dup":160}],367:[function(require,module,exports){
 var Reporter = require('../base').Reporter;
 var EncoderBuffer = require('../base').EncoderBuffer;
 var assert = require('minimalistic-assert');
@@ -98105,7 +98109,7 @@ Node.prototype._encodePrimitive = function encodePrimitive(tag, data) {
     throw new Error('Unsupported tag: ' + tag);
 };
 
-},{"../base":364,"minimalistic-assert":375}],366:[function(require,module,exports){
+},{"../base":366,"minimalistic-assert":377}],368:[function(require,module,exports){
 var inherits = require('inherits');
 
 function Reporter(options) {
@@ -98209,11 +98213,11 @@ ReporterError.prototype.rethrow = function rethrow(msg) {
   return this;
 };
 
-},{"inherits":493}],367:[function(require,module,exports){
-arguments[4][159][0].apply(exports,arguments)
-},{"../constants":368,"dup":159}],368:[function(require,module,exports){
-arguments[4][160][0].apply(exports,arguments)
-},{"./der":367,"dup":160}],369:[function(require,module,exports){
+},{"inherits":495}],369:[function(require,module,exports){
+arguments[4][163][0].apply(exports,arguments)
+},{"../constants":370,"dup":163}],370:[function(require,module,exports){
+arguments[4][164][0].apply(exports,arguments)
+},{"./der":369,"dup":164}],371:[function(require,module,exports){
 var inherits = require('inherits');
 
 var asn1 = require('../../asn1');
@@ -98506,13 +98510,13 @@ function derDecodeLen(buf, primitive, fail) {
   return len;
 }
 
-},{"../../asn1":361,"inherits":493}],370:[function(require,module,exports){
+},{"../../asn1":363,"inherits":495}],372:[function(require,module,exports){
 var decoders = exports;
 
 decoders.der = require('./der');
 decoders.pem = require('./pem');
 
-},{"./der":369,"./pem":371}],371:[function(require,module,exports){
+},{"./der":371,"./pem":373}],373:[function(require,module,exports){
 var inherits = require('inherits');
 var Buffer = require('buffer').Buffer;
 
@@ -98564,7 +98568,7 @@ PEMDecoder.prototype.decode = function decode(data, options) {
   return DERDecoder.prototype.decode.call(this, input, options);
 };
 
-},{"../../asn1":361,"./der":369,"buffer":297,"inherits":493}],372:[function(require,module,exports){
+},{"../../asn1":363,"./der":371,"buffer":299,"inherits":495}],374:[function(require,module,exports){
 var inherits = require('inherits');
 var Buffer = require('buffer').Buffer;
 
@@ -98838,13 +98842,13 @@ function encodeTag(tag, primitive, cls, reporter) {
   return res;
 }
 
-},{"../../asn1":361,"buffer":297,"inherits":493}],373:[function(require,module,exports){
+},{"../../asn1":363,"buffer":299,"inherits":495}],375:[function(require,module,exports){
 var encoders = exports;
 
 encoders.der = require('./der');
 encoders.pem = require('./pem');
 
-},{"./der":372,"./pem":374}],374:[function(require,module,exports){
+},{"./der":374,"./pem":376}],376:[function(require,module,exports){
 var inherits = require('inherits');
 var Buffer = require('buffer').Buffer;
 
@@ -98869,45 +98873,45 @@ PEMEncoder.prototype.encode = function encode(data, options) {
   return out.join('\n');
 };
 
-},{"../../asn1":361,"./der":372,"buffer":297,"inherits":493}],375:[function(require,module,exports){
-arguments[4][329][0].apply(exports,arguments)
-},{"dup":329}],376:[function(require,module,exports){
-arguments[4][17][0].apply(exports,arguments)
-},{"buffer":297,"dup":17}],377:[function(require,module,exports){
-arguments[4][18][0].apply(exports,arguments)
-},{"./aes":376,"./ghash":381,"buffer":297,"buffer-xor":390,"cipher-base":391,"dup":18,"inherits":493}],378:[function(require,module,exports){
-arguments[4][19][0].apply(exports,arguments)
-},{"./decrypter":379,"./encrypter":380,"./modes":382,"dup":19}],379:[function(require,module,exports){
-arguments[4][20][0].apply(exports,arguments)
-},{"./aes":376,"./authCipher":377,"./modes":382,"./modes/cbc":383,"./modes/cfb":384,"./modes/cfb1":385,"./modes/cfb8":386,"./modes/ctr":387,"./modes/ecb":388,"./modes/ofb":389,"./streamCipher":392,"buffer":297,"cipher-base":391,"dup":20,"evp_bytestokey":393,"inherits":493}],380:[function(require,module,exports){
+},{"../../asn1":363,"./der":374,"buffer":299,"inherits":495}],377:[function(require,module,exports){
+arguments[4][331][0].apply(exports,arguments)
+},{"dup":331}],378:[function(require,module,exports){
 arguments[4][21][0].apply(exports,arguments)
-},{"./aes":376,"./authCipher":377,"./modes":382,"./modes/cbc":383,"./modes/cfb":384,"./modes/cfb1":385,"./modes/cfb8":386,"./modes/ctr":387,"./modes/ecb":388,"./modes/ofb":389,"./streamCipher":392,"buffer":297,"cipher-base":391,"dup":21,"evp_bytestokey":393,"inherits":493}],381:[function(require,module,exports){
+},{"buffer":299,"dup":21}],379:[function(require,module,exports){
 arguments[4][22][0].apply(exports,arguments)
-},{"buffer":297,"dup":22}],382:[function(require,module,exports){
+},{"./aes":378,"./ghash":383,"buffer":299,"buffer-xor":392,"cipher-base":393,"dup":22,"inherits":495}],380:[function(require,module,exports){
 arguments[4][23][0].apply(exports,arguments)
-},{"dup":23}],383:[function(require,module,exports){
+},{"./decrypter":381,"./encrypter":382,"./modes":384,"dup":23}],381:[function(require,module,exports){
 arguments[4][24][0].apply(exports,arguments)
-},{"buffer-xor":390,"dup":24}],384:[function(require,module,exports){
+},{"./aes":378,"./authCipher":379,"./modes":384,"./modes/cbc":385,"./modes/cfb":386,"./modes/cfb1":387,"./modes/cfb8":388,"./modes/ctr":389,"./modes/ecb":390,"./modes/ofb":391,"./streamCipher":394,"buffer":299,"cipher-base":393,"dup":24,"evp_bytestokey":395,"inherits":495}],382:[function(require,module,exports){
 arguments[4][25][0].apply(exports,arguments)
-},{"buffer":297,"buffer-xor":390,"dup":25}],385:[function(require,module,exports){
+},{"./aes":378,"./authCipher":379,"./modes":384,"./modes/cbc":385,"./modes/cfb":386,"./modes/cfb1":387,"./modes/cfb8":388,"./modes/ctr":389,"./modes/ecb":390,"./modes/ofb":391,"./streamCipher":394,"buffer":299,"cipher-base":393,"dup":25,"evp_bytestokey":395,"inherits":495}],383:[function(require,module,exports){
 arguments[4][26][0].apply(exports,arguments)
-},{"buffer":297,"dup":26}],386:[function(require,module,exports){
+},{"buffer":299,"dup":26}],384:[function(require,module,exports){
 arguments[4][27][0].apply(exports,arguments)
-},{"buffer":297,"dup":27}],387:[function(require,module,exports){
+},{"dup":27}],385:[function(require,module,exports){
 arguments[4][28][0].apply(exports,arguments)
-},{"buffer":297,"buffer-xor":390,"dup":28}],388:[function(require,module,exports){
+},{"buffer-xor":392,"dup":28}],386:[function(require,module,exports){
 arguments[4][29][0].apply(exports,arguments)
-},{"dup":29}],389:[function(require,module,exports){
+},{"buffer":299,"buffer-xor":392,"dup":29}],387:[function(require,module,exports){
 arguments[4][30][0].apply(exports,arguments)
-},{"buffer":297,"buffer-xor":390,"dup":30}],390:[function(require,module,exports){
-arguments[4][35][0].apply(exports,arguments)
-},{"buffer":297,"dup":35}],391:[function(require,module,exports){
-arguments[4][318][0].apply(exports,arguments)
-},{"buffer":297,"dup":318,"inherits":493,"stream":513,"string_decoder":514}],392:[function(require,module,exports){
-arguments[4][34][0].apply(exports,arguments)
-},{"./aes":376,"buffer":297,"cipher-base":391,"dup":34,"inherits":493}],393:[function(require,module,exports){
+},{"buffer":299,"dup":30}],388:[function(require,module,exports){
+arguments[4][31][0].apply(exports,arguments)
+},{"buffer":299,"dup":31}],389:[function(require,module,exports){
 arguments[4][32][0].apply(exports,arguments)
-},{"buffer":297,"create-hash/md5":421,"dup":32}],394:[function(require,module,exports){
+},{"buffer":299,"buffer-xor":392,"dup":32}],390:[function(require,module,exports){
+arguments[4][33][0].apply(exports,arguments)
+},{"dup":33}],391:[function(require,module,exports){
+arguments[4][34][0].apply(exports,arguments)
+},{"buffer":299,"buffer-xor":392,"dup":34}],392:[function(require,module,exports){
+arguments[4][39][0].apply(exports,arguments)
+},{"buffer":299,"dup":39}],393:[function(require,module,exports){
+arguments[4][320][0].apply(exports,arguments)
+},{"buffer":299,"dup":320,"inherits":495,"stream":515,"string_decoder":516}],394:[function(require,module,exports){
+arguments[4][38][0].apply(exports,arguments)
+},{"./aes":378,"buffer":299,"cipher-base":393,"dup":38,"inherits":495}],395:[function(require,module,exports){
+arguments[4][36][0].apply(exports,arguments)
+},{"buffer":299,"create-hash/md5":423,"dup":36}],396:[function(require,module,exports){
 (function (Buffer){
 // much of this based on https://github.com/indutny/self-signed/blob/gh-pages/lib/rsa.js
 var createHmac = require('create-hmac')
@@ -99096,7 +99100,7 @@ module.exports.getKey = getKey
 module.exports.makeKey = makeKey
 
 }).call(this,require("buffer").Buffer)
-},{"./curves":333,"bn.js":334,"browserify-rsa":335,"buffer":297,"create-hmac":432,"elliptic":336,"parse-asn1":360}],395:[function(require,module,exports){
+},{"./curves":335,"bn.js":336,"browserify-rsa":337,"buffer":299,"create-hmac":434,"elliptic":338,"parse-asn1":362}],397:[function(require,module,exports){
 (function (Buffer){
 // much of this based on https://github.com/indutny/self-signed/blob/gh-pages/lib/rsa.js
 var curves = require('./curves')
@@ -99203,7 +99207,7 @@ function checkValue (b, q) {
 module.exports = verify
 
 }).call(this,require("buffer").Buffer)
-},{"./curves":333,"bn.js":334,"buffer":297,"elliptic":336,"parse-asn1":360}],396:[function(require,module,exports){
+},{"./curves":335,"bn.js":336,"buffer":299,"elliptic":338,"parse-asn1":362}],398:[function(require,module,exports){
 (function (Buffer){
 var elliptic = require('elliptic');
 var BN = require('bn.js');
@@ -99319,79 +99323,79 @@ function formatReturnValue(bn, enc, len) {
 }
 
 }).call(this,require("buffer").Buffer)
-},{"bn.js":397,"buffer":297,"elliptic":398}],397:[function(require,module,exports){
-arguments[4][334][0].apply(exports,arguments)
-},{"dup":334}],398:[function(require,module,exports){
-arguments[4][109][0].apply(exports,arguments)
-},{"../package.json":418,"./elliptic/curve":401,"./elliptic/curves":404,"./elliptic/ec":405,"./elliptic/hmac-drbg":408,"./elliptic/utils":410,"brorand":411,"dup":109}],399:[function(require,module,exports){
-arguments[4][337][0].apply(exports,arguments)
-},{"../../elliptic":398,"bn.js":397,"dup":337}],400:[function(require,module,exports){
-arguments[4][338][0].apply(exports,arguments)
-},{"../../elliptic":398,"../curve":401,"bn.js":397,"dup":338,"inherits":493}],401:[function(require,module,exports){
-arguments[4][112][0].apply(exports,arguments)
-},{"./base":399,"./edwards":400,"./mont":402,"./short":403,"dup":112}],402:[function(require,module,exports){
+},{"bn.js":399,"buffer":299,"elliptic":400}],399:[function(require,module,exports){
+arguments[4][336][0].apply(exports,arguments)
+},{"dup":336}],400:[function(require,module,exports){
 arguments[4][113][0].apply(exports,arguments)
-},{"../curve":401,"bn.js":397,"dup":113,"inherits":493}],403:[function(require,module,exports){
-arguments[4][341][0].apply(exports,arguments)
-},{"../../elliptic":398,"../curve":401,"bn.js":397,"dup":341,"inherits":493}],404:[function(require,module,exports){
-arguments[4][115][0].apply(exports,arguments)
-},{"../elliptic":398,"./precomputed/secp256k1":409,"dup":115,"hash.js":412}],405:[function(require,module,exports){
-arguments[4][343][0].apply(exports,arguments)
-},{"../../elliptic":398,"./key":406,"./signature":407,"bn.js":397,"dup":343}],406:[function(require,module,exports){
+},{"../package.json":420,"./elliptic/curve":403,"./elliptic/curves":406,"./elliptic/ec":407,"./elliptic/hmac-drbg":410,"./elliptic/utils":412,"brorand":413,"dup":113}],401:[function(require,module,exports){
+arguments[4][339][0].apply(exports,arguments)
+},{"../../elliptic":400,"bn.js":399,"dup":339}],402:[function(require,module,exports){
+arguments[4][340][0].apply(exports,arguments)
+},{"../../elliptic":400,"../curve":403,"bn.js":399,"dup":340,"inherits":495}],403:[function(require,module,exports){
+arguments[4][116][0].apply(exports,arguments)
+},{"./base":401,"./edwards":402,"./mont":404,"./short":405,"dup":116}],404:[function(require,module,exports){
 arguments[4][117][0].apply(exports,arguments)
-},{"../../elliptic":398,"bn.js":397,"dup":117}],407:[function(require,module,exports){
-arguments[4][345][0].apply(exports,arguments)
-},{"../../elliptic":398,"bn.js":397,"dup":345}],408:[function(require,module,exports){
+},{"../curve":403,"bn.js":399,"dup":117,"inherits":495}],405:[function(require,module,exports){
+arguments[4][343][0].apply(exports,arguments)
+},{"../../elliptic":400,"../curve":403,"bn.js":399,"dup":343,"inherits":495}],406:[function(require,module,exports){
 arguments[4][119][0].apply(exports,arguments)
-},{"../elliptic":398,"dup":119,"hash.js":412}],409:[function(require,module,exports){
-arguments[4][120][0].apply(exports,arguments)
-},{"dup":120}],410:[function(require,module,exports){
+},{"../elliptic":400,"./precomputed/secp256k1":411,"dup":119,"hash.js":414}],407:[function(require,module,exports){
+arguments[4][345][0].apply(exports,arguments)
+},{"../../elliptic":400,"./key":408,"./signature":409,"bn.js":399,"dup":345}],408:[function(require,module,exports){
 arguments[4][121][0].apply(exports,arguments)
-},{"dup":121}],411:[function(require,module,exports){
-arguments[4][122][0].apply(exports,arguments)
-},{"dup":122}],412:[function(require,module,exports){
+},{"../../elliptic":400,"bn.js":399,"dup":121}],409:[function(require,module,exports){
+arguments[4][347][0].apply(exports,arguments)
+},{"../../elliptic":400,"bn.js":399,"dup":347}],410:[function(require,module,exports){
 arguments[4][123][0].apply(exports,arguments)
-},{"./hash/common":413,"./hash/hmac":414,"./hash/ripemd":415,"./hash/sha":416,"./hash/utils":417,"dup":123}],413:[function(require,module,exports){
+},{"../elliptic":400,"dup":123,"hash.js":414}],411:[function(require,module,exports){
 arguments[4][124][0].apply(exports,arguments)
-},{"../hash":412,"dup":124}],414:[function(require,module,exports){
+},{"dup":124}],412:[function(require,module,exports){
 arguments[4][125][0].apply(exports,arguments)
-},{"../hash":412,"dup":125}],415:[function(require,module,exports){
+},{"dup":125}],413:[function(require,module,exports){
 arguments[4][126][0].apply(exports,arguments)
-},{"../hash":412,"dup":126}],416:[function(require,module,exports){
+},{"dup":126}],414:[function(require,module,exports){
 arguments[4][127][0].apply(exports,arguments)
-},{"../hash":412,"dup":127}],417:[function(require,module,exports){
+},{"./hash/common":415,"./hash/hmac":416,"./hash/ripemd":417,"./hash/sha":418,"./hash/utils":419,"dup":127}],415:[function(require,module,exports){
 arguments[4][128][0].apply(exports,arguments)
-},{"dup":128,"inherits":493}],418:[function(require,module,exports){
-arguments[4][356][0].apply(exports,arguments)
-},{"dup":356}],419:[function(require,module,exports){
-arguments[4][38][0].apply(exports,arguments)
-},{"./md5":421,"buffer":297,"cipher-base":422,"dup":38,"inherits":493,"ripemd160":423,"sha.js":425}],420:[function(require,module,exports){
-arguments[4][39][0].apply(exports,arguments)
-},{"buffer":297,"dup":39}],421:[function(require,module,exports){
-arguments[4][40][0].apply(exports,arguments)
-},{"./helpers":420,"dup":40}],422:[function(require,module,exports){
-arguments[4][318][0].apply(exports,arguments)
-},{"buffer":297,"dup":318,"inherits":493,"stream":513,"string_decoder":514}],423:[function(require,module,exports){
+},{"../hash":414,"dup":128}],416:[function(require,module,exports){
+arguments[4][129][0].apply(exports,arguments)
+},{"../hash":414,"dup":129}],417:[function(require,module,exports){
+arguments[4][130][0].apply(exports,arguments)
+},{"../hash":414,"dup":130}],418:[function(require,module,exports){
+arguments[4][131][0].apply(exports,arguments)
+},{"../hash":414,"dup":131}],419:[function(require,module,exports){
+arguments[4][132][0].apply(exports,arguments)
+},{"dup":132,"inherits":495}],420:[function(require,module,exports){
+arguments[4][358][0].apply(exports,arguments)
+},{"dup":358}],421:[function(require,module,exports){
+arguments[4][42][0].apply(exports,arguments)
+},{"./md5":423,"buffer":299,"cipher-base":424,"dup":42,"inherits":495,"ripemd160":425,"sha.js":427}],422:[function(require,module,exports){
 arguments[4][43][0].apply(exports,arguments)
-},{"buffer":297,"dup":43}],424:[function(require,module,exports){
+},{"buffer":299,"dup":43}],423:[function(require,module,exports){
 arguments[4][44][0].apply(exports,arguments)
-},{"buffer":297,"dup":44}],425:[function(require,module,exports){
-arguments[4][45][0].apply(exports,arguments)
-},{"./sha":426,"./sha1":427,"./sha224":428,"./sha256":429,"./sha384":430,"./sha512":431,"dup":45}],426:[function(require,module,exports){
-arguments[4][46][0].apply(exports,arguments)
-},{"./hash":424,"buffer":297,"dup":46,"inherits":493}],427:[function(require,module,exports){
+},{"./helpers":422,"dup":44}],424:[function(require,module,exports){
+arguments[4][320][0].apply(exports,arguments)
+},{"buffer":299,"dup":320,"inherits":495,"stream":515,"string_decoder":516}],425:[function(require,module,exports){
 arguments[4][47][0].apply(exports,arguments)
-},{"./hash":424,"buffer":297,"dup":47,"inherits":493}],428:[function(require,module,exports){
+},{"buffer":299,"dup":47}],426:[function(require,module,exports){
 arguments[4][48][0].apply(exports,arguments)
-},{"./hash":424,"./sha256":429,"buffer":297,"dup":48,"inherits":493}],429:[function(require,module,exports){
+},{"buffer":299,"dup":48}],427:[function(require,module,exports){
 arguments[4][49][0].apply(exports,arguments)
-},{"./hash":424,"buffer":297,"dup":49,"inherits":493}],430:[function(require,module,exports){
+},{"./sha":428,"./sha1":429,"./sha224":430,"./sha256":431,"./sha384":432,"./sha512":433,"dup":49}],428:[function(require,module,exports){
 arguments[4][50][0].apply(exports,arguments)
-},{"./hash":424,"./sha512":431,"buffer":297,"dup":50,"inherits":493}],431:[function(require,module,exports){
+},{"./hash":426,"buffer":299,"dup":50,"inherits":495}],429:[function(require,module,exports){
 arguments[4][51][0].apply(exports,arguments)
-},{"./hash":424,"buffer":297,"dup":51,"inherits":493}],432:[function(require,module,exports){
-arguments[4][59][0].apply(exports,arguments)
-},{"buffer":297,"create-hash/browser":419,"dup":59,"inherits":493,"stream":513}],433:[function(require,module,exports){
+},{"./hash":426,"buffer":299,"dup":51,"inherits":495}],430:[function(require,module,exports){
+arguments[4][52][0].apply(exports,arguments)
+},{"./hash":426,"./sha256":431,"buffer":299,"dup":52,"inherits":495}],431:[function(require,module,exports){
+arguments[4][53][0].apply(exports,arguments)
+},{"./hash":426,"buffer":299,"dup":53,"inherits":495}],432:[function(require,module,exports){
+arguments[4][54][0].apply(exports,arguments)
+},{"./hash":426,"./sha512":433,"buffer":299,"dup":54,"inherits":495}],433:[function(require,module,exports){
+arguments[4][55][0].apply(exports,arguments)
+},{"./hash":426,"buffer":299,"dup":55,"inherits":495}],434:[function(require,module,exports){
+arguments[4][63][0].apply(exports,arguments)
+},{"buffer":299,"create-hash/browser":421,"dup":63,"inherits":495,"stream":515}],435:[function(require,module,exports){
 (function (Buffer){
 var generatePrime = require('./lib/generatePrime');
 var primes = require('./lib/primes');
@@ -99435,7 +99439,7 @@ exports.DiffieHellmanGroup = exports.createDiffieHellmanGroup = exports.getDiffi
 exports.createDiffieHellman = exports.DiffieHellman = createDiffieHellman;
 
 }).call(this,require("buffer").Buffer)
-},{"./lib/dh":434,"./lib/generatePrime":435,"./lib/primes":436,"buffer":297}],434:[function(require,module,exports){
+},{"./lib/dh":436,"./lib/generatePrime":437,"./lib/primes":438,"buffer":299}],436:[function(require,module,exports){
 (function (Buffer){
 var BN = require('bn.js');
 var MillerRabin = require('miller-rabin');
@@ -99605,7 +99609,7 @@ function formatReturnValue(bn, enc) {
   }
 }
 }).call(this,require("buffer").Buffer)
-},{"./generatePrime":435,"bn.js":437,"buffer":297,"miller-rabin":438,"randombytes":486}],435:[function(require,module,exports){
+},{"./generatePrime":437,"bn.js":439,"buffer":299,"miller-rabin":440,"randombytes":488}],437:[function(require,module,exports){
 var randomBytes = require('randombytes');
 module.exports = findPrime;
 findPrime.simpleSieve = simpleSieve;
@@ -99738,7 +99742,7 @@ function findPrime(bits, gen) {
   }
 
 }
-},{"bn.js":437,"miller-rabin":438,"randombytes":486}],436:[function(require,module,exports){
+},{"bn.js":439,"miller-rabin":440,"randombytes":488}],438:[function(require,module,exports){
 module.exports={
     "modp1": {
         "gen": "02",
@@ -99773,9 +99777,9 @@ module.exports={
         "prime": "ffffffffffffffffc90fdaa22168c234c4c6628b80dc1cd129024e088a67cc74020bbea63b139b22514a08798e3404ddef9519b3cd3a431b302b0a6df25f14374fe1356d6d51c245e485b576625e7ec6f44c42e9a637ed6b0bff5cb6f406b7edee386bfb5a899fa5ae9f24117c4b1fe649286651ece45b3dc2007cb8a163bf0598da48361c55d39a69163fa8fd24cf5f83655d23dca3ad961c62f356208552bb9ed529077096966d670c354e4abc9804f1746c08ca18217c32905e462e36ce3be39e772c180e86039b2783a2ec07a28fb5c55df06f4c52c9de2bcbf6955817183995497cea956ae515d2261898fa051015728e5a8aaac42dad33170d04507a33a85521abdf1cba64ecfb850458dbef0a8aea71575d060c7db3970f85a6e1e4c7abf5ae8cdb0933d71e8c94e04a25619dcee3d2261ad2ee6bf12ffa06d98a0864d87602733ec86a64521f2b18177b200cbbe117577a615d6c770988c0bad946e208e24fa074e5ab3143db5bfce0fd108e4b82d120a92108011a723c12a787e6d788719a10bdba5b2699c327186af4e23c1a946834b6150bda2583e9ca2ad44ce8dbbbc2db04de8ef92e8efc141fbecaa6287c59474e6bc05d99b2964fa090c3a2233ba186515be7ed1f612970cee2d7afb81bdd762170481cd0069127d5b05aa993b4ea988d8fddc186ffb7dc90a6c08f4df435c93402849236c3fab4d27c7026c1d4dcb2602646dec9751e763dba37bdf8ff9406ad9e530ee5db382f413001aeb06a53ed9027d831179727b0865a8918da3edbebcf9b14ed44ce6cbaced4bb1bdb7f1447e6cc254b332051512bd7af426fb8f401378cd2bf5983ca01c64b92ecf032ea15d1721d03f482d7ce6e74fef6d55e702f46980c82b5a84031900b1c9e59e7c97fbec7e8f323a97a7e36cc88be0f1d45b7ff585ac54bd407b22b4154aacc8f6d7ebf48e1d814cc5ed20f8037e0a79715eef29be32806a1d58bb7c5da76f550aa3d8a1fbff0eb19ccb1a313d55cda56c9ec2ef29632387fe8d76e3c0468043e8f663f4860ee12bf2d5b0b7474d6e694f91e6dbe115974a3926f12fee5e438777cb6a932df8cd8bec4d073b931ba3bc832b68d9dd300741fa7bf8afc47ed2576f6936ba424663aab639c5ae4f5683423b4742bf1c978238f16cbe39d652de3fdb8befc848ad922222e04a4037c0713eb57a81a23f0c73473fc646cea306b4bcbc8862f8385ddfa9d4b7fa2c087e879683303ed5bdd3a062b3cf5b3a278a66d2a13f83f44f82ddf310ee074ab6a364597e899a0255dc164f31cc50846851df9ab48195ded7ea1b1d510bd7ee74d73faf36bc31ecfa268359046f4eb879f924009438b481c6cd7889a002ed5ee382bc9190da6fc026e479558e4475677e9aa9e3050e2765694dfc81f56e880b96e7160c980dd98edd3dfffffffffffffffff"
     }
 }
-},{}],437:[function(require,module,exports){
-arguments[4][334][0].apply(exports,arguments)
-},{"dup":334}],438:[function(require,module,exports){
+},{}],439:[function(require,module,exports){
+arguments[4][336][0].apply(exports,arguments)
+},{"dup":336}],440:[function(require,module,exports){
 var bn = require('bn.js');
 var brorand = require('brorand');
 
@@ -99890,11 +99894,11 @@ MillerRabin.prototype.getDivisor = function getDivisor(n, k) {
   return false;
 };
 
-},{"bn.js":437,"brorand":439}],439:[function(require,module,exports){
-arguments[4][122][0].apply(exports,arguments)
-},{"dup":122}],440:[function(require,module,exports){
-arguments[4][58][0].apply(exports,arguments)
-},{"buffer":297,"create-hmac":432,"dup":58}],441:[function(require,module,exports){
+},{"bn.js":439,"brorand":441}],441:[function(require,module,exports){
+arguments[4][126][0].apply(exports,arguments)
+},{"dup":126}],442:[function(require,module,exports){
+arguments[4][62][0].apply(exports,arguments)
+},{"buffer":299,"create-hmac":434,"dup":62}],443:[function(require,module,exports){
 exports.publicEncrypt = require('./publicEncrypt');
 exports.privateDecrypt = require('./privateDecrypt');
 
@@ -99905,7 +99909,7 @@ exports.privateEncrypt = function privateEncrypt(key, buf) {
 exports.publicDecrypt = function publicDecrypt(key, buf) {
   return exports.privateDecrypt(key, buf, true);
 };
-},{"./privateDecrypt":482,"./publicEncrypt":483}],442:[function(require,module,exports){
+},{"./privateDecrypt":484,"./publicEncrypt":485}],444:[function(require,module,exports){
 (function (Buffer){
 var createHash = require('create-hash');
 module.exports = function (seed, len) {
@@ -99924,85 +99928,85 @@ function i2ops(c) {
   return out;
 }
 }).call(this,require("buffer").Buffer)
-},{"buffer":297,"create-hash":419}],443:[function(require,module,exports){
-arguments[4][334][0].apply(exports,arguments)
-},{"dup":334}],444:[function(require,module,exports){
-arguments[4][335][0].apply(exports,arguments)
-},{"bn.js":443,"buffer":297,"dup":335,"randombytes":486}],445:[function(require,module,exports){
-arguments[4][357][0].apply(exports,arguments)
-},{"dup":357}],446:[function(require,module,exports){
-arguments[4][358][0].apply(exports,arguments)
-},{"asn1.js":449,"dup":358}],447:[function(require,module,exports){
+},{"buffer":299,"create-hash":421}],445:[function(require,module,exports){
+arguments[4][336][0].apply(exports,arguments)
+},{"dup":336}],446:[function(require,module,exports){
+arguments[4][337][0].apply(exports,arguments)
+},{"bn.js":445,"buffer":299,"dup":337,"randombytes":488}],447:[function(require,module,exports){
 arguments[4][359][0].apply(exports,arguments)
-},{"browserify-aes":466,"buffer":297,"dup":359,"evp_bytestokey":481}],448:[function(require,module,exports){
+},{"dup":359}],448:[function(require,module,exports){
 arguments[4][360][0].apply(exports,arguments)
-},{"./aesid.json":445,"./asn1":446,"./fixProc":447,"browserify-aes":466,"buffer":297,"dup":360,"pbkdf2":440}],449:[function(require,module,exports){
-arguments[4][153][0].apply(exports,arguments)
-},{"./asn1/api":450,"./asn1/base":452,"./asn1/constants":456,"./asn1/decoders":458,"./asn1/encoders":461,"bn.js":443,"dup":153}],450:[function(require,module,exports){
+},{"asn1.js":451,"dup":360}],449:[function(require,module,exports){
+arguments[4][361][0].apply(exports,arguments)
+},{"browserify-aes":468,"buffer":299,"dup":361,"evp_bytestokey":483}],450:[function(require,module,exports){
 arguments[4][362][0].apply(exports,arguments)
-},{"../asn1":449,"dup":362,"inherits":493,"vm":518}],451:[function(require,module,exports){
-arguments[4][363][0].apply(exports,arguments)
-},{"../base":452,"buffer":297,"dup":363,"inherits":493}],452:[function(require,module,exports){
-arguments[4][156][0].apply(exports,arguments)
-},{"./buffer":451,"./node":453,"./reporter":454,"dup":156}],453:[function(require,module,exports){
+},{"./aesid.json":447,"./asn1":448,"./fixProc":449,"browserify-aes":468,"buffer":299,"dup":362,"pbkdf2":442}],451:[function(require,module,exports){
+arguments[4][157][0].apply(exports,arguments)
+},{"./asn1/api":452,"./asn1/base":454,"./asn1/constants":458,"./asn1/decoders":460,"./asn1/encoders":463,"bn.js":445,"dup":157}],452:[function(require,module,exports){
+arguments[4][364][0].apply(exports,arguments)
+},{"../asn1":451,"dup":364,"inherits":495,"vm":520}],453:[function(require,module,exports){
 arguments[4][365][0].apply(exports,arguments)
-},{"../base":452,"dup":365,"minimalistic-assert":463}],454:[function(require,module,exports){
-arguments[4][366][0].apply(exports,arguments)
-},{"dup":366,"inherits":493}],455:[function(require,module,exports){
-arguments[4][159][0].apply(exports,arguments)
-},{"../constants":456,"dup":159}],456:[function(require,module,exports){
+},{"../base":454,"buffer":299,"dup":365,"inherits":495}],454:[function(require,module,exports){
 arguments[4][160][0].apply(exports,arguments)
-},{"./der":455,"dup":160}],457:[function(require,module,exports){
-arguments[4][369][0].apply(exports,arguments)
-},{"../../asn1":449,"dup":369,"inherits":493}],458:[function(require,module,exports){
-arguments[4][370][0].apply(exports,arguments)
-},{"./der":457,"./pem":459,"dup":370}],459:[function(require,module,exports){
+},{"./buffer":453,"./node":455,"./reporter":456,"dup":160}],455:[function(require,module,exports){
+arguments[4][367][0].apply(exports,arguments)
+},{"../base":454,"dup":367,"minimalistic-assert":465}],456:[function(require,module,exports){
+arguments[4][368][0].apply(exports,arguments)
+},{"dup":368,"inherits":495}],457:[function(require,module,exports){
+arguments[4][163][0].apply(exports,arguments)
+},{"../constants":458,"dup":163}],458:[function(require,module,exports){
+arguments[4][164][0].apply(exports,arguments)
+},{"./der":457,"dup":164}],459:[function(require,module,exports){
 arguments[4][371][0].apply(exports,arguments)
-},{"../../asn1":449,"./der":457,"buffer":297,"dup":371,"inherits":493}],460:[function(require,module,exports){
+},{"../../asn1":451,"dup":371,"inherits":495}],460:[function(require,module,exports){
 arguments[4][372][0].apply(exports,arguments)
-},{"../../asn1":449,"buffer":297,"dup":372,"inherits":493}],461:[function(require,module,exports){
+},{"./der":459,"./pem":461,"dup":372}],461:[function(require,module,exports){
 arguments[4][373][0].apply(exports,arguments)
-},{"./der":460,"./pem":462,"dup":373}],462:[function(require,module,exports){
+},{"../../asn1":451,"./der":459,"buffer":299,"dup":373,"inherits":495}],462:[function(require,module,exports){
 arguments[4][374][0].apply(exports,arguments)
-},{"../../asn1":449,"./der":460,"buffer":297,"dup":374,"inherits":493}],463:[function(require,module,exports){
-arguments[4][329][0].apply(exports,arguments)
-},{"dup":329}],464:[function(require,module,exports){
-arguments[4][17][0].apply(exports,arguments)
-},{"buffer":297,"dup":17}],465:[function(require,module,exports){
-arguments[4][18][0].apply(exports,arguments)
-},{"./aes":464,"./ghash":469,"buffer":297,"buffer-xor":478,"cipher-base":479,"dup":18,"inherits":493}],466:[function(require,module,exports){
-arguments[4][19][0].apply(exports,arguments)
-},{"./decrypter":467,"./encrypter":468,"./modes":470,"dup":19}],467:[function(require,module,exports){
-arguments[4][20][0].apply(exports,arguments)
-},{"./aes":464,"./authCipher":465,"./modes":470,"./modes/cbc":471,"./modes/cfb":472,"./modes/cfb1":473,"./modes/cfb8":474,"./modes/ctr":475,"./modes/ecb":476,"./modes/ofb":477,"./streamCipher":480,"buffer":297,"cipher-base":479,"dup":20,"evp_bytestokey":481,"inherits":493}],468:[function(require,module,exports){
+},{"../../asn1":451,"buffer":299,"dup":374,"inherits":495}],463:[function(require,module,exports){
+arguments[4][375][0].apply(exports,arguments)
+},{"./der":462,"./pem":464,"dup":375}],464:[function(require,module,exports){
+arguments[4][376][0].apply(exports,arguments)
+},{"../../asn1":451,"./der":462,"buffer":299,"dup":376,"inherits":495}],465:[function(require,module,exports){
+arguments[4][331][0].apply(exports,arguments)
+},{"dup":331}],466:[function(require,module,exports){
 arguments[4][21][0].apply(exports,arguments)
-},{"./aes":464,"./authCipher":465,"./modes":470,"./modes/cbc":471,"./modes/cfb":472,"./modes/cfb1":473,"./modes/cfb8":474,"./modes/ctr":475,"./modes/ecb":476,"./modes/ofb":477,"./streamCipher":480,"buffer":297,"cipher-base":479,"dup":21,"evp_bytestokey":481,"inherits":493}],469:[function(require,module,exports){
+},{"buffer":299,"dup":21}],467:[function(require,module,exports){
 arguments[4][22][0].apply(exports,arguments)
-},{"buffer":297,"dup":22}],470:[function(require,module,exports){
+},{"./aes":466,"./ghash":471,"buffer":299,"buffer-xor":480,"cipher-base":481,"dup":22,"inherits":495}],468:[function(require,module,exports){
 arguments[4][23][0].apply(exports,arguments)
-},{"dup":23}],471:[function(require,module,exports){
+},{"./decrypter":469,"./encrypter":470,"./modes":472,"dup":23}],469:[function(require,module,exports){
 arguments[4][24][0].apply(exports,arguments)
-},{"buffer-xor":478,"dup":24}],472:[function(require,module,exports){
+},{"./aes":466,"./authCipher":467,"./modes":472,"./modes/cbc":473,"./modes/cfb":474,"./modes/cfb1":475,"./modes/cfb8":476,"./modes/ctr":477,"./modes/ecb":478,"./modes/ofb":479,"./streamCipher":482,"buffer":299,"cipher-base":481,"dup":24,"evp_bytestokey":483,"inherits":495}],470:[function(require,module,exports){
 arguments[4][25][0].apply(exports,arguments)
-},{"buffer":297,"buffer-xor":478,"dup":25}],473:[function(require,module,exports){
+},{"./aes":466,"./authCipher":467,"./modes":472,"./modes/cbc":473,"./modes/cfb":474,"./modes/cfb1":475,"./modes/cfb8":476,"./modes/ctr":477,"./modes/ecb":478,"./modes/ofb":479,"./streamCipher":482,"buffer":299,"cipher-base":481,"dup":25,"evp_bytestokey":483,"inherits":495}],471:[function(require,module,exports){
 arguments[4][26][0].apply(exports,arguments)
-},{"buffer":297,"dup":26}],474:[function(require,module,exports){
+},{"buffer":299,"dup":26}],472:[function(require,module,exports){
 arguments[4][27][0].apply(exports,arguments)
-},{"buffer":297,"dup":27}],475:[function(require,module,exports){
+},{"dup":27}],473:[function(require,module,exports){
 arguments[4][28][0].apply(exports,arguments)
-},{"buffer":297,"buffer-xor":478,"dup":28}],476:[function(require,module,exports){
+},{"buffer-xor":480,"dup":28}],474:[function(require,module,exports){
 arguments[4][29][0].apply(exports,arguments)
-},{"dup":29}],477:[function(require,module,exports){
+},{"buffer":299,"buffer-xor":480,"dup":29}],475:[function(require,module,exports){
 arguments[4][30][0].apply(exports,arguments)
-},{"buffer":297,"buffer-xor":478,"dup":30}],478:[function(require,module,exports){
-arguments[4][35][0].apply(exports,arguments)
-},{"buffer":297,"dup":35}],479:[function(require,module,exports){
-arguments[4][318][0].apply(exports,arguments)
-},{"buffer":297,"dup":318,"inherits":493,"stream":513,"string_decoder":514}],480:[function(require,module,exports){
-arguments[4][34][0].apply(exports,arguments)
-},{"./aes":464,"buffer":297,"cipher-base":479,"dup":34,"inherits":493}],481:[function(require,module,exports){
+},{"buffer":299,"dup":30}],476:[function(require,module,exports){
+arguments[4][31][0].apply(exports,arguments)
+},{"buffer":299,"dup":31}],477:[function(require,module,exports){
 arguments[4][32][0].apply(exports,arguments)
-},{"buffer":297,"create-hash/md5":421,"dup":32}],482:[function(require,module,exports){
+},{"buffer":299,"buffer-xor":480,"dup":32}],478:[function(require,module,exports){
+arguments[4][33][0].apply(exports,arguments)
+},{"dup":33}],479:[function(require,module,exports){
+arguments[4][34][0].apply(exports,arguments)
+},{"buffer":299,"buffer-xor":480,"dup":34}],480:[function(require,module,exports){
+arguments[4][39][0].apply(exports,arguments)
+},{"buffer":299,"dup":39}],481:[function(require,module,exports){
+arguments[4][320][0].apply(exports,arguments)
+},{"buffer":299,"dup":320,"inherits":495,"stream":515,"string_decoder":516}],482:[function(require,module,exports){
+arguments[4][38][0].apply(exports,arguments)
+},{"./aes":466,"buffer":299,"cipher-base":481,"dup":38,"inherits":495}],483:[function(require,module,exports){
+arguments[4][36][0].apply(exports,arguments)
+},{"buffer":299,"create-hash/md5":423,"dup":36}],484:[function(require,module,exports){
 (function (Buffer){
 var parseKeys = require('parse-asn1');
 var mgf = require('./mgf');
@@ -100113,7 +100117,7 @@ function compare(a, b){
   return dif;
 }
 }).call(this,require("buffer").Buffer)
-},{"./mgf":442,"./withPublic":484,"./xor":485,"bn.js":443,"browserify-rsa":444,"buffer":297,"create-hash":419,"parse-asn1":448}],483:[function(require,module,exports){
+},{"./mgf":444,"./withPublic":486,"./xor":487,"bn.js":445,"browserify-rsa":446,"buffer":299,"create-hash":421,"parse-asn1":450}],485:[function(require,module,exports){
 (function (Buffer){
 var parseKeys = require('parse-asn1');
 var randomBytes = require('randombytes');
@@ -100211,7 +100215,7 @@ function nonZero(len, crypto) {
   return out;
 }
 }).call(this,require("buffer").Buffer)
-},{"./mgf":442,"./withPublic":484,"./xor":485,"bn.js":443,"browserify-rsa":444,"buffer":297,"create-hash":419,"parse-asn1":448,"randombytes":486}],484:[function(require,module,exports){
+},{"./mgf":444,"./withPublic":486,"./xor":487,"bn.js":445,"browserify-rsa":446,"buffer":299,"create-hash":421,"parse-asn1":450,"randombytes":488}],486:[function(require,module,exports){
 (function (Buffer){
 var bn = require('bn.js');
 function withPublic(paddedMsg, key) {
@@ -100224,7 +100228,7 @@ function withPublic(paddedMsg, key) {
 
 module.exports = withPublic;
 }).call(this,require("buffer").Buffer)
-},{"bn.js":443,"buffer":297}],485:[function(require,module,exports){
+},{"bn.js":445,"buffer":299}],487:[function(require,module,exports){
 module.exports = function xor(a, b) {
   var len = a.length;
   var i = -1;
@@ -100233,7 +100237,7 @@ module.exports = function xor(a, b) {
   }
   return a
 };
-},{}],486:[function(require,module,exports){
+},{}],488:[function(require,module,exports){
 (function (process,global,Buffer){
 'use strict';
 
@@ -100265,7 +100269,7 @@ function oldBrowser() {
 }
 
 }).call(this,require('_process'),typeof global !== "undefined" ? global : typeof self !== "undefined" ? self : typeof window !== "undefined" ? window : {},require("buffer").Buffer)
-},{"_process":497,"buffer":297}],487:[function(require,module,exports){
+},{"_process":499,"buffer":299}],489:[function(require,module,exports){
 // Copyright Joyent, Inc. and other Node contributors.
 //
 // Permission is hereby granted, free of charge, to any person obtaining a
@@ -100568,7 +100572,7 @@ function isUndefined(arg) {
   return arg === void 0;
 }
 
-},{}],488:[function(require,module,exports){
+},{}],490:[function(require,module,exports){
 var http = module.exports;
 var EventEmitter = require('events').EventEmitter;
 var Request = require('./lib/request');
@@ -100714,7 +100718,7 @@ http.STATUS_CODES = {
     510 : 'Not Extended',               // RFC 2774
     511 : 'Network Authentication Required' // RFC 6585
 };
-},{"./lib/request":489,"events":487,"url":515}],489:[function(require,module,exports){
+},{"./lib/request":491,"events":489,"url":517}],491:[function(require,module,exports){
 var Stream = require('stream');
 var Response = require('./response');
 var Base64 = require('Base64');
@@ -100925,7 +100929,7 @@ var isXHR2Compatible = function (obj) {
     if (typeof FormData !== 'undefined' && obj instanceof FormData) return true;
 };
 
-},{"./response":490,"Base64":491,"inherits":493,"stream":513}],490:[function(require,module,exports){
+},{"./response":492,"Base64":493,"inherits":495,"stream":515}],492:[function(require,module,exports){
 var Stream = require('stream');
 var util = require('util');
 
@@ -101047,7 +101051,7 @@ var isArray = Array.isArray || function (xs) {
     return Object.prototype.toString.call(xs) === '[object Array]';
 };
 
-},{"stream":513,"util":517}],491:[function(require,module,exports){
+},{"stream":515,"util":519}],493:[function(require,module,exports){
 ;(function () {
 
   var object = typeof exports != 'undefined' ? exports : this; // #8: web workers
@@ -101109,7 +101113,7 @@ var isArray = Array.isArray || function (xs) {
 
 }());
 
-},{}],492:[function(require,module,exports){
+},{}],494:[function(require,module,exports){
 var http = require('http');
 
 var https = module.exports;
@@ -101125,9 +101129,9 @@ https.request = function (params, cb) {
     return http.request.call(this, params, cb);
 }
 
-},{"http":488}],493:[function(require,module,exports){
-arguments[4][33][0].apply(exports,arguments)
-},{"dup":33}],494:[function(require,module,exports){
+},{"http":490}],495:[function(require,module,exports){
+arguments[4][37][0].apply(exports,arguments)
+},{"dup":37}],496:[function(require,module,exports){
 /**
  * Determine if an object is Buffer
  *
@@ -101146,9 +101150,9 @@ module.exports = function (obj) {
     ))
 }
 
-},{}],495:[function(require,module,exports){
-arguments[4][204][0].apply(exports,arguments)
-},{"dup":204}],496:[function(require,module,exports){
+},{}],497:[function(require,module,exports){
+arguments[4][206][0].apply(exports,arguments)
+},{"dup":206}],498:[function(require,module,exports){
 (function (process){
 // Copyright Joyent, Inc. and other Node contributors.
 //
@@ -101376,7 +101380,7 @@ var substr = 'ab'.substr(-1) === 'b'
 ;
 
 }).call(this,require('_process'))
-},{"_process":497}],497:[function(require,module,exports){
+},{"_process":499}],499:[function(require,module,exports){
 // shim for using process in browser
 
 var process = module.exports = {};
@@ -101436,7 +101440,7 @@ process.chdir = function (dir) {
 };
 process.umask = function() { return 0; };
 
-},{}],498:[function(require,module,exports){
+},{}],500:[function(require,module,exports){
 (function (global){
 /*! http://mths.be/punycode v1.2.4 by @mathias */
 ;(function(root) {
@@ -101947,7 +101951,7 @@ process.umask = function() { return 0; };
 }(this));
 
 }).call(this,typeof global !== "undefined" ? global : typeof self !== "undefined" ? self : typeof window !== "undefined" ? window : {})
-},{}],499:[function(require,module,exports){
+},{}],501:[function(require,module,exports){
 // Copyright Joyent, Inc. and other Node contributors.
 //
 // Permission is hereby granted, free of charge, to any person obtaining a
@@ -102033,7 +102037,7 @@ var isArray = Array.isArray || function (xs) {
   return Object.prototype.toString.call(xs) === '[object Array]';
 };
 
-},{}],500:[function(require,module,exports){
+},{}],502:[function(require,module,exports){
 // Copyright Joyent, Inc. and other Node contributors.
 //
 // Permission is hereby granted, free of charge, to any person obtaining a
@@ -102120,15 +102124,15 @@ var objectKeys = Object.keys || function (obj) {
   return res;
 };
 
-},{}],501:[function(require,module,exports){
+},{}],503:[function(require,module,exports){
 'use strict';
 
 exports.decode = exports.parse = require('./decode');
 exports.encode = exports.stringify = require('./encode');
 
-},{"./decode":499,"./encode":500}],502:[function(require,module,exports){
-arguments[4][198][0].apply(exports,arguments)
-},{"./lib/_stream_duplex.js":503,"dup":198}],503:[function(require,module,exports){
+},{"./decode":501,"./encode":502}],504:[function(require,module,exports){
+arguments[4][200][0].apply(exports,arguments)
+},{"./lib/_stream_duplex.js":505,"dup":200}],505:[function(require,module,exports){
 (function (process){
 // Copyright Joyent, Inc. and other Node contributors.
 //
@@ -102221,7 +102225,7 @@ function forEach (xs, f) {
 }
 
 }).call(this,require('_process'))
-},{"./_stream_readable":505,"./_stream_writable":507,"_process":497,"core-util-is":508,"inherits":493}],504:[function(require,module,exports){
+},{"./_stream_readable":507,"./_stream_writable":509,"_process":499,"core-util-is":510,"inherits":495}],506:[function(require,module,exports){
 // Copyright Joyent, Inc. and other Node contributors.
 //
 // Permission is hereby granted, free of charge, to any person obtaining a
@@ -102269,7 +102273,7 @@ PassThrough.prototype._transform = function(chunk, encoding, cb) {
   cb(null, chunk);
 };
 
-},{"./_stream_transform":506,"core-util-is":508,"inherits":493}],505:[function(require,module,exports){
+},{"./_stream_transform":508,"core-util-is":510,"inherits":495}],507:[function(require,module,exports){
 (function (process){
 // Copyright Joyent, Inc. and other Node contributors.
 //
@@ -103224,7 +103228,7 @@ function indexOf (xs, x) {
 }
 
 }).call(this,require('_process'))
-},{"./_stream_duplex":503,"_process":497,"buffer":297,"core-util-is":508,"events":487,"inherits":493,"isarray":495,"stream":513,"string_decoder/":514,"util":283}],506:[function(require,module,exports){
+},{"./_stream_duplex":505,"_process":499,"buffer":299,"core-util-is":510,"events":489,"inherits":495,"isarray":497,"stream":515,"string_decoder/":516,"util":285}],508:[function(require,module,exports){
 // Copyright Joyent, Inc. and other Node contributors.
 //
 // Permission is hereby granted, free of charge, to any person obtaining a
@@ -103435,7 +103439,7 @@ function done(stream, er) {
   return stream.push(null);
 }
 
-},{"./_stream_duplex":503,"core-util-is":508,"inherits":493}],507:[function(require,module,exports){
+},{"./_stream_duplex":505,"core-util-is":510,"inherits":495}],509:[function(require,module,exports){
 (function (process){
 // Copyright Joyent, Inc. and other Node contributors.
 //
@@ -103916,7 +103920,7 @@ function endWritable(stream, state, cb) {
 }
 
 }).call(this,require('_process'))
-},{"./_stream_duplex":503,"_process":497,"buffer":297,"core-util-is":508,"inherits":493,"stream":513}],508:[function(require,module,exports){
+},{"./_stream_duplex":505,"_process":499,"buffer":299,"core-util-is":510,"inherits":495,"stream":515}],510:[function(require,module,exports){
 (function (Buffer){
 // Copyright Joyent, Inc. and other Node contributors.
 //
@@ -104026,10 +104030,10 @@ function objectToString(o) {
   return Object.prototype.toString.call(o);
 }
 }).call(this,{"isBuffer":require("../../../../insert-module-globals/node_modules/is-buffer/index.js")})
-},{"../../../../insert-module-globals/node_modules/is-buffer/index.js":494}],509:[function(require,module,exports){
+},{"../../../../insert-module-globals/node_modules/is-buffer/index.js":496}],511:[function(require,module,exports){
 module.exports = require("./lib/_stream_passthrough.js")
 
-},{"./lib/_stream_passthrough.js":504}],510:[function(require,module,exports){
+},{"./lib/_stream_passthrough.js":506}],512:[function(require,module,exports){
 exports = module.exports = require('./lib/_stream_readable.js');
 exports.Stream = require('stream');
 exports.Readable = exports;
@@ -104038,13 +104042,13 @@ exports.Duplex = require('./lib/_stream_duplex.js');
 exports.Transform = require('./lib/_stream_transform.js');
 exports.PassThrough = require('./lib/_stream_passthrough.js');
 
-},{"./lib/_stream_duplex.js":503,"./lib/_stream_passthrough.js":504,"./lib/_stream_readable.js":505,"./lib/_stream_transform.js":506,"./lib/_stream_writable.js":507,"stream":513}],511:[function(require,module,exports){
+},{"./lib/_stream_duplex.js":505,"./lib/_stream_passthrough.js":506,"./lib/_stream_readable.js":507,"./lib/_stream_transform.js":508,"./lib/_stream_writable.js":509,"stream":515}],513:[function(require,module,exports){
 module.exports = require("./lib/_stream_transform.js")
 
-},{"./lib/_stream_transform.js":506}],512:[function(require,module,exports){
+},{"./lib/_stream_transform.js":508}],514:[function(require,module,exports){
 module.exports = require("./lib/_stream_writable.js")
 
-},{"./lib/_stream_writable.js":507}],513:[function(require,module,exports){
+},{"./lib/_stream_writable.js":509}],515:[function(require,module,exports){
 // Copyright Joyent, Inc. and other Node contributors.
 //
 // Permission is hereby granted, free of charge, to any person obtaining a
@@ -104173,9 +104177,9 @@ Stream.prototype.pipe = function(dest, options) {
   return dest;
 };
 
-},{"events":487,"inherits":493,"readable-stream/duplex.js":502,"readable-stream/passthrough.js":509,"readable-stream/readable.js":510,"readable-stream/transform.js":511,"readable-stream/writable.js":512}],514:[function(require,module,exports){
-arguments[4][206][0].apply(exports,arguments)
-},{"buffer":297,"dup":206}],515:[function(require,module,exports){
+},{"events":489,"inherits":495,"readable-stream/duplex.js":504,"readable-stream/passthrough.js":511,"readable-stream/readable.js":512,"readable-stream/transform.js":513,"readable-stream/writable.js":514}],516:[function(require,module,exports){
+arguments[4][208][0].apply(exports,arguments)
+},{"buffer":299,"dup":208}],517:[function(require,module,exports){
 // Copyright Joyent, Inc. and other Node contributors.
 //
 // Permission is hereby granted, free of charge, to any person obtaining a
@@ -104884,14 +104888,14 @@ function isNullOrUndefined(arg) {
   return  arg == null;
 }
 
-},{"punycode":498,"querystring":501}],516:[function(require,module,exports){
+},{"punycode":500,"querystring":503}],518:[function(require,module,exports){
 module.exports = function isBuffer(arg) {
   return arg && typeof arg === 'object'
     && typeof arg.copy === 'function'
     && typeof arg.fill === 'function'
     && typeof arg.readUInt8 === 'function';
 }
-},{}],517:[function(require,module,exports){
+},{}],519:[function(require,module,exports){
 (function (process,global){
 // Copyright Joyent, Inc. and other Node contributors.
 //
@@ -105481,7 +105485,7 @@ function hasOwnProperty(obj, prop) {
 }
 
 }).call(this,require('_process'),typeof global !== "undefined" ? global : typeof self !== "undefined" ? self : typeof window !== "undefined" ? window : {})
-},{"./support/isBuffer":516,"_process":497,"inherits":493}],518:[function(require,module,exports){
+},{"./support/isBuffer":518,"_process":499,"inherits":495}],520:[function(require,module,exports){
 var indexOf = require('indexof');
 
 var Object_keys = function (obj) {
@@ -105621,7 +105625,7 @@ exports.createContext = Script.createContext = function (context) {
     return copy;
 };
 
-},{"indexof":519}],519:[function(require,module,exports){
+},{"indexof":521}],521:[function(require,module,exports){
 
 var indexOf = [].indexOf;
 
