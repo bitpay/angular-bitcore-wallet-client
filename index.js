@@ -1,7 +1,7 @@
 var bwcModule = angular.module('bwcModule', []);
 var Client = require('bitcore-wallet-client');
 
-bwcModule.constant('MODULE_VERSION', '1.1.5');
+bwcModule.constant('MODULE_VERSION', '1.1.6');
 
 bwcModule.provider("bwcService", function() {
   var provider = {};
@@ -38,6 +38,8 @@ bwcModule.provider("bwcService", function() {
     service.getSJCL = function() {
       return Client.sjcl;
     };
+
+    service.buildTx = Client.buildTx;
 
     service.getUtils = function() {
       return Client.Utils;
