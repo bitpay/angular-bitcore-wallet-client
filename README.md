@@ -1,4 +1,10 @@
 # angular-bitcore-wallet-client
+
+THIS PACKAGE IS NOT LONGER MAINTAINED, SINCE IT WAS INTEGRATIONS INTO COPAY. IF YOU NEED IT, UPDATING BWC VERSION
+SHOULD BE STRAIGTH FORWARD.
+=-
+
+
 AngularJS module for [bitcore-wallet-client](https://github.com/bitpay/bitcore-wallet-client)
 
 ## Get started
