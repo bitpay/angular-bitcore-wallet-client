@@ -1,38 +1,27 @@
 var bwcModule = angular.module('bwcModule', []);
 var Client = require('bitcore-wallet-client');
 
-bwcModule.constant('MODULE_VERSION', '1.1.7');
+bwcModule.constant('MODULE_VERSION', '5.1.2');
 
 bwcModule.provider("bwcService", function() {
   var provider = {};
 
   var config = {
-    baseUrl: 'http://localhost:3001/bws/api',
+    baseUrl: 'https://bws.bitpay.com/bws/api',
     verbose: null,
-    transports: null
-  };
-
-  provider.setBaseUrl = function(url) {
-    config.baseUrl = url;
-  };
-
-  provider.setVerbose = function(v) {
-    config.verbose = v ? true : false;
+    timeout: 100000,
+    transports: ['polling']
   };
 
   provider.$get = function() {
     var service = {};
 
-    service.setBaseUrl = function(url) {
-      config.baseUrl = url;
-    };
-
-    service.setTransports = function(transports) {
-      config.transports = transports;
-    };
-
     service.getBitcore = function() {
       return Client.Bitcore;
+    };
+
+    service.getErrors = function() {
+      return Client.errors;
     };
 
     service.getSJCL = function() {
@@ -41,19 +30,24 @@ bwcModule.provider("bwcService", function() {
 
     service.buildTx = Client.buildTx;
     service.parseSecret = Client.parseSecret;
+    service.Client = Client;
 
     service.getUtils = function() {
       return Client.Utils;
     };
 
-    service.getClient = function(walletData) {
+    service.getClient = function(walletData, opts) {
+      opts = opts || {};
+
+      //note opts use `bwsurl` all lowercase;
       var bwc = new Client({
-        baseUrl: config.baseUrl,
-        verbose: config.verbose,
-        transports: config.transports
+        baseUrl: opts.bwsurl || config.baseUrl,
+          verbose: opts.verbose || config.verbose,
+          timeout: config.timeout,
+          transports: config.transport
       });
       if (walletData)
-        bwc.import(walletData);
+        bwc.import(walletData, opts);
       return bwc;
     };
     return service;
